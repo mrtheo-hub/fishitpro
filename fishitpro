@@ -1,40 +1,554 @@
 --[[
-    Fish It Silent - BAC Resistant
-    Strategy: Zero remote calls, pure input simulation, pixel detection
+    Fish It Pro - Auto Fishing Script
+    Features: Instant Catch, Fast Reel, Auto Cast, Anti-AFK, Stats
+    Compatible: Most Roblox Executors (Level 3+)
 ]]
 
-local SilentFish = {}
+local FishItPro = {}
 
 -- Services
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local TweenService = game:GetService("TweenService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 
--- Config
-SilentFish.Config = {
+-- Config System
+FishItPro.Config = {
     Enabled = false,
-    Mode = "Legit", -- "Legit", "Fast", "Silent"
-    DetectionType = "Visual", -- "Visual", "Audio", "Vibration"
+    InstantCatch = false,      -- Langsung dapet ikan tanpa reel
+    UltraFastReel = true,      -- Reel super cepat
+    AutoCast = true,           -- Auto lempar kail
+    AutoSell = false,          -- Auto jual ikan
+    AntiAFK = true,            -- Anti kick AFK
+    SafeMode = true,           -- Random delay biar natural
+    ReelSpeed = 0.03,          -- Kecepatan reel (detik)
+    InstantDelay = 0.1,        -- Delay instant catch
+    MaxReelTime = 3,           -- Maksimal waktu reel (detik)
+    SelectedRod = "Default",   -- Pilihan joran
+    AutoEquip = true,          -- Auto equip joran
+    Webhook = "",              -- Discord webhook untuk notif
+    Stats = {
+        TotalCaught = 0,
+        SessionCaught = 0,
+        RareCaught = 0,
+        StartTime = tick()
+    }
+}
+
+-- Remote Events (auto-find)
+local Remotes = {
+    Cast = nil,
+    Reel = nil,
+    Catch = nil,
+    Sell = nil,
+    Equip = nil
+}
+
+-- UI Elements Storage
+local UI = {}
+
+-- Find Remotes Function
+function FishItPro:FindRemotes()
+    for _, v in pairs(ReplicatedStorage:GetDescendants()) do
+        if v:IsA("RemoteEvent") or v:IsA("RemoteFunction") then
+            local name = v.Name:lower()
+            if name:find("cast") or name:find("throw") then
+                Remotes.Cast = v
+            elseif name:find("reel") or name:find("pull") or name:find("tug") then
+                Remotes.Reel = v
+            elseif name:find("catch") or name:find("collect") or name:find("harvest") then
+                Remotes.Catch = v
+            elseif name:find("sell") then
+                Remotes.Sell = v
+            elseif name:find("equip") then
+                Remotes.Equip = v
+            end
+        end
+    end
     
-    -- Humanization
-    MinDelay = 0.08,
-    MaxDelay = 0.18,
-    ReactionMin = 0.15,  -- Delay react ke gigitan (human-like)
-    ReactionMax = 0.35,
+    -- Cari di workspace juga
+    for _, v in pairs(workspace:GetDescendants()) do
+        if v:IsA("RemoteEvent") and v.Name:lower():find("fish") then
+            if not Remotes.Catch then Remotes.Catch = v end
+        end
+    end
+end
+
+-- Create Modern GUI
+function FishItPro:CreateGUI()
+    -- Main GUI
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "FishItPro_" .. math.random(1000, 9999)
+    ScreenGui.Parent = CoreGui
+    ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     
-    -- Safety
-    MaxFishPerHour = 120,  -- Limit biar gak suspicious
-    BreakInterval = 300,   -- Istirahat 5 menit tiap...
-    BreakDuration = 60,    -- ...1 menit
+    -- Main Frame (Rounded, Modern)
+    local MainFrame = Instance.new("Frame")
+    MainFrame.Name = "MainFrame"
+    MainFrame.Size = UDim2.new(0, 320, 0, 450)
+    MainFrame.Position = UDim2.new(0.5, -160, 0.5, -225)
+    MainFrame.BackgroundColor3 = Color3.fromRGB(25, 25, 35)
+    MainFrame.BorderSizePixel = 0
+    MainFrame.ClipsDescendants = true
+    MainFrame.Parent = ScreenGui
     
-    -- Position (sesuaikan UI game)
-    CastButton = {X = 0.5, Y = 0.8},      -- Posisi tombol cast (normalized)
-    ReelArea = {X1 = 0.3, Y1 = 0.6, X2 = 0.7, Y2 = 0.9}, -- Area reel
-    BiteIndicator = {X = 0.5, Y = 0.3},   -- Posisi indikator "!"
+    -- Corner Radius
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 12)
+    Corner.Parent = MainFrame
+    
+    -- Shadow
+    local Shadow = Instance.new("ImageLabel")
+    Shadow.Name = "Shadow"
+    Shadow.AnchorPoint = Vector2.new(0.5, 0.5)
+    Shadow.BackgroundTransparency = 1
+    Shadow.Position = UDim2.new(0.5, 0, 0.5, 0)
+    Shadow.Size = UDim2.new(1, 40, 1, 40)
+    Shadow.Image = "rbxassetid://5554236805"
+    Shadow.ImageColor3 = Color3.fromRGB(0, 0, 0)
+    Shadow.ImageTransparency = 0.6
+    Shadow.ScaleType = Enum.ScaleType.Slice
+    Shadow.SliceCenter = Rect.new(23, 23, 277, 277)
+    Shadow.Parent = MainFrame
+    
+    -- Title Bar
+    local TitleBar = Instance.new("Frame")
+    TitleBar.Name = "TitleBar"
+    TitleBar.Size = UDim2.new(1, 0, 0, 40)
+    TitleBar.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
+    TitleBar.BorderSizePixel = 0
+    TitleBar.Parent = MainFrame
+    
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 12)
+    TitleCorner.Parent = TitleBar
+    
+    -- Title Text
+    local Title = Instance.new("TextLabel")
+    Title.Name = "Title"
+    Title.Size = UDim2.new(0.6, 0, 1, 0)
+    Title.Position = UDim2.new(0, 15, 0, 0)
+    Title.BackgroundTransparency = 1
+    Title.Text = "🎣 Fish It Pro"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 18
+    Title.Font = Enum.Font.GothamBold
+    Title.TextXAlignment = Enum.TextXAlignment.Left
+    Title.Parent = TitleBar
+    
+    -- Status Indicator
+    local StatusDot = Instance.new("Frame")
+    StatusDot.Name = "Status"
+    StatusDot.Size = UDim2.new(0, 8, 0, 8)
+    StatusDot.Position = UDim2.new(1, -60, 0.5, -4)
+    StatusDot.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    StatusDot.BorderSizePixel = 0
+    StatusDot.Parent = TitleBar
+    
+    local StatusCorner = Instance.new("UICorner")
+    StatusCorner.CornerRadius = UDim.new(1, 0)
+    StatusCorner.Parent = StatusDot
+    
+    -- Close Button
+    local CloseBtn = Instance.new("TextButton")
+    CloseBtn.Name = "Close"
+    CloseBtn.Size = UDim2.new(0, 30, 0, 30)
+    CloseBtn.Position = UDim2.new(1, -35, 0, 5)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(255, 70, 70)
+    CloseBtn.Text = "X"
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.TextSize = 14
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.Parent = TitleBar
+    
+    local CloseCorner = Instance.new("UICorner")
+    CloseCorner.CornerRadius = UDim.new(0, 6)
+    CloseCorner.Parent = CloseBtn
+    
+    -- Minimize Button
+    local MinBtn = Instance.new("TextButton")
+    MinBtn.Name = "Minimize"
+    MinBtn.Size = UDim2.new(0, 30, 0, 30)
+    MinBtn.Position = UDim2.new(1, -70, 0, 5)
+    MinBtn.BackgroundColor3 = Color3.fromRGB(70, 70, 70)
+    MinBtn.Text = "-"
+    MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    MinBtn.TextSize = 18
+    MinBtn.Font = Enum.Font.GothamBold
+    MinBtn.Parent = TitleBar
+    
+    local MinCorner = Instance.new("UICorner")
+    MinCorner.CornerRadius = UDim.new(0, 6)
+    MinCorner.Parent = MinBtn
+    
+    -- Content Frame
+    local Content = Instance.new("ScrollingFrame")
+    Content.Name = "Content"
+    Content.Size = UDim2.new(1, -20, 1, -50)
+    Content.Position = UDim2.new(0, 10, 0, 45)
+    Content.BackgroundTransparency = 1
+    Content.ScrollBarThickness = 4
+    Content.ScrollBarImageColor3 = Color3.fromRGB(100, 100, 100)
+    Content.CanvasSize = UDim2.new(0, 0, 0, 600)
+    Content.Parent = MainFrame
+    
+    -- UI List Layout
+    local ListLayout = Instance.new("UIListLayout")
+    ListLayout.Padding = UDim.new(0, 10)
+    ListLayout.Parent = Content
+    
+    -- Function to Create Toggle
+    local function CreateToggle(parent, text, configKey, callback)
+        local Frame = Instance.new("Frame")
+        Frame.Size = UDim2.new(1, 0, 0, 40)
+        Frame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+        Frame.BorderSizePixel = 0
+        Frame.Parent = parent
+        
+        local FrameCorner = Instance.new("UICorner")
+        FrameCorner.CornerRadius = UDim.new(0, 8)
+        FrameCorner.Parent = Frame
+        
+        local Label = Instance.new("TextLabel")
+        Label.Size = UDim2.new(0.7, 0, 1, 0)
+        Label.Position = UDim2.new(0, 15, 0, 0)
+        Label.BackgroundTransparency = 1
+        Label.Text = text
+        Label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Label.TextSize = 14
+        Label.Font = Enum.Font.Gotham
+        Label.TextXAlignment = Enum.TextXAlignment.Left
+        Label.Parent = Frame
+        
+        local ToggleBtn = Instance.new("TextButton")
+        ToggleBtn.Size = UDim2.new(0, 50, 0, 24)
+        ToggleBtn.Position = UDim2.new(1, -60, 0.5, -12)
+        ToggleBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 75)
+        ToggleBtn.Text = ""
+        ToggleBtn.AutoButtonColor = false
+        ToggleBtn.Parent = Frame
+        
+        local ToggleCorner = Instance.new("UICorner")
+        ToggleCorner.CornerRadius = UDim.new(0, 12)
+        ToggleCorner.Parent = ToggleBtn
+        
+        local Circle = Instance.new("Frame")
+        Circle.Size = UDim2.new(0, 20, 0, 20)
+        Circle.Position = UDim2.new(0, 2, 0.5, -10)
+        Circle.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        Circle.BorderSizePixel = 0
+        Circle.Parent = ToggleBtn
+        
+        local CircleCorner = Instance.new("UICorner")
+        CircleCorner.CornerRadius = UDim.new(1, 0)
+        CircleCorner.Parent = Circle
+        
+        local Enabled = FishItPro.Config[configKey]
+        
+        local function UpdateToggle()
+            Enabled = not Enabled
+            FishItPro.Config[configKey] = Enabled
+            
+            local targetPos = Enabled and UDim2.new(0, 28, 0.5, -10) or UDim2.new(0, 2, 0.5, -10)
+            local targetColor = Enabled and Color3.fromRGB(0, 200, 100) or Color3.fromRGB(60, 60, 75)
+            
+            TweenService:Create(Circle, TweenInfo.new(0.2), {Position = targetPos}):Play()
+            TweenService:Create(ToggleBtn, TweenInfo.new(0.2), {BackgroundColor3 = targetColor}):Play()
+            
+            if callback then callback(Enabled) end
+        end
+        
+        if Enabled then
+            Circle.Position = UDim2.new(0, 28, 0.5, -10)
+            ToggleBtn.BackgroundColor3 = Color3.fromRGB(0, 200, 100)
+        end
+        
+        ToggleBtn.MouseButton1Click:Connect(UpdateToggle)
+        
+        return Frame
+    end
+    
+    -- Function to Create Slider
+    local function CreateSlider(parent, text, configKey, min, max, suffix)
+        local Frame = Instance.new("Frame")
+        Frame.Size = UDim2.new(1, 0, 0, 60)
+        Frame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+        Frame.BorderSizePixel = 0
+        Frame.Parent = parent
+        
+        local FrameCorner = Instance.new("UICorner")
+        FrameCorner.CornerRadius = UDim.new(0, 8)
+        FrameCorner.Parent = Frame
+        
+        local Label = Instance.new("TextLabel")
+        Label.Size = UDim2.new(0.6, 0, 0, 25)
+        Label.Position = UDim2.new(0, 15, 0, 5)
+        Label.BackgroundTransparency = 1
+        Label.Text = text
+        Label.TextColor3 = Color3.fromRGB(255, 255, 255)
+        Label.TextSize = 14
+        Label.Font = Enum.Font.Gotham
+        Label.TextXAlignment = Enum.TextXAlignment.Left
+        Label.Parent = Frame
+        
+        local ValueLabel = Instance.new("TextLabel")
+        ValueLabel.Size = UDim2.new(0.3, 0, 0, 25)
+        ValueLabel.Position = UDim2.new(0.7, -10, 0, 5)
+        ValueLabel.BackgroundTransparency = 1
+        ValueLabel.Text = tostring(FishItPro.Config[configKey]) .. (suffix or "")
+        ValueLabel.TextColor3 = Color3.fromRGB(0, 200, 255)
+        ValueLabel.TextSize = 14
+        ValueLabel.Font = Enum.Font.GothamBold
+        ValueLabel.TextXAlignment = Enum.TextXAlignment.Right
+        ValueLabel.Parent = Frame
+        
+        local SliderBg = Instance.new("Frame")
+        SliderBg.Name = "SliderBg"
+        SliderBg.Size = UDim2.new(1, -30, 0, 8)
+        SliderBg.Position = UDim2.new(0, 15, 0, 38)
+        SliderBg.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
+        SliderBg.BorderSizePixel = 0
+        SliderBg.Parent = Frame
+        
+        local SliderBgCorner = Instance.new("UICorner")
+        SliderBgCorner.CornerRadius = UDim.new(0, 4)
+        SliderBgCorner.Parent = SliderBg
+        
+        local SliderFill = Instance.new("Frame")
+        SliderFill.Name = "Fill"
+        SliderFill.Size = UDim2.new((FishItPro.Config[configKey] - min) / (max - min), 0, 1, 0)
+        SliderFill.BackgroundColor3 = Color3.fromRGB(0, 150, 255)
+        SliderFill.BorderSizePixel = 0
+        SliderFill.Parent = SliderBg
+        
+        local SliderFillCorner = Instance.new("UICorner")
+        SliderFillCorner.CornerRadius = UDim.new(0, 4)
+        SliderFillCorner.Parent = SliderFill
+        
+        local SliderKnob = Instance.new("Frame")
+        SliderKnob.Size = UDim2.new(0, 16, 0, 16)
+        SliderKnob.Position = UDim2.new((FishItPro.Config[configKey] - min) / (max - min), -8, 0.5, -8)
+        SliderKnob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
+        SliderKnob.BorderSizePixel = 0
+        SliderKnob.Parent = SliderBg
+        
+        local SliderKnobCorner = Instance.new("UICorner")
+        SliderKnobCorner.CornerRadius = UDim.new(1, 0)
+        SliderKnobCorner.Parent = SliderKnob
+        
+        local Dragging = false
+        
+        local function UpdateSlider(input)
+            local pos = math.clamp((input.Position.X - SliderBg.AbsolutePosition.X) / SliderBg.AbsoluteSize.X, 0, 1)
+            local value = min + (pos * (max - min))
+            
+            if suffix == "s" then
+                value = math.round(value * 100) / 100
+            else
+                value = math.round(value)
+            end
+            
+            FishItPro.Config[configKey] = value
+            ValueLabel.Text = tostring(value) .. (suffix or "")
+            
+            SliderFill.Size = UDim2.new(pos, 0, 1, 0)
+            SliderKnob.Position = UDim2.new(pos, -8, 0.5, -8)
+        end
+        
+        SliderKnob.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                Dragging = true
+            end
+        end)
+        
+        UserInputService.InputEnded:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                Dragging = false
+            end
+        end)
+        
+        UserInputService.InputChanged:Connect(function(input)
+            if Dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+                UpdateSlider(input)
+            end
+        end)
+        
+        SliderBg.InputBegan:Connect(function(input)
+            if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
+                UpdateSlider(input)
+            end
+        end)
+        
+        return Frame
+    end
+    
+    -- Create Sections
+    local function CreateSection(text)
+        local Label = Instance.new("TextLabel")
+        Label.Size = UDim2.new(1, 0, 0, 25)
+        Label.BackgroundTransparency = 1
+        Label.Text = text
+        Label.TextColor3 = Color3.fromRGB(150, 150, 170)
+        Label.TextSize = 12
+        Label.Font = Enum.Font.GothamBold
+        Label.TextXAlignment = Enum.TextXAlignment.Left
+        Label.Parent = Content
+        return Label
+    end
+    
+    -- Build UI
+    CreateSection("⚡ MAIN FEATURES")
+    
+    CreateToggle(Content, "Enable Auto Fish", "Enabled", function(val)
+        if val then
+            FishItPro:Start()
+            StatusDot.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+        else
+            FishItPro:Stop()
+            StatusDot.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+        end
+    end)
+    
+    CreateToggle(Content, "🔥 INSTANT CATCH", "InstantCatch", function(val)
+        print("Instant Catch:", val)
+    end)
+    
+    CreateToggle(Content, "Ultra Fast Reel", "UltraFastReel")
+    CreateToggle(Content, "Auto Cast", "AutoCast")
+    CreateToggle(Content, "Auto Sell Fish", "AutoSell")
+    
+    CreateSection("⚙️ SETTINGS")
+    
+    CreateSlider(Content, "Reel Speed", "ReelSpeed", 0.01, 0.5, "s")
+    CreateSlider(Content, "Max Reel Time", "MaxReelTime", 1, 10, "s")
+    
+    CreateToggle(Content, "Safe Mode (Anti-Ban)", "SafeMode")
+    CreateToggle(Content, "Anti AFK", "AntiAFK", function(val)
+        if val then FishItPro:StartAntiAFK() end
+    end)
+    
+    CreateSection("📊 STATISTICS")
+    
+    local StatsFrame = Instance.new("Frame")
+    StatsFrame.Size = UDim2.new(1, 0, 0, 80)
+    StatsFrame.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
+    StatsFrame.Parent = Content
+    
+    local StatsCorner = Instance.new("UICorner")
+    StatsCorner.CornerRadius = UDim.new(0, 8)
+    StatsCorner.Parent = StatsFrame
+    
+    local StatsText = Instance.new("TextLabel")
+    StatsText.Name = "StatsText"
+    StatsText.Size = UDim2.new(1, -20, 1, -10)
+    StatsText.Position = UDim2.new(0, 10, 0, 5)
+    StatsText.BackgroundTransparency = 1
+    StatsText.Text = "Session: 0 fish\nTotal: 0 fish\nRare: 0 | Time: 0m"
+    StatsText.TextColor3 = Color3.fromRGB(200, 200, 200)
+    StatsText.TextSize = 13
+    StatsText.Font = Enum.Font.Gotham
+    StatsText.TextXAlignment = Enum.TextXAlignment.Left
+    StatsText.TextYAlignment = Enum.TextYAlignment.Top
+    StatsText.Parent = StatsFrame
+    
+    -- Update Stats Loop
+    task.spawn(function()
+        while task.wait(1) do
+            if not StatsText.Parent then break end
+            local elapsed = math.floor((tick() - FishItPro.Config.Stats.StartTime) / 60)
+            StatsText.Text = string.format(
+                "Session: %d fish\nTotal: %d fish\nRare: %d | Time: %dm",
+                FishItPro.Config.Stats.SessionCaught,
+                FishItPro.Config.Stats.TotalCaught,
+                FishItPro.Config.Stats.RareCaught,
+                elapsed
+            )
+        end
+    end)
+    
+    -- Drag Functionality
+    local Dragging = false
+    local DragStart, StartPos
+    
+    TitleBar.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = true
+            DragStart = input.Position
+            StartPos = MainFrame.Position
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if Dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - DragStart
+            MainFrame.Position = UDim2.new(
+                StartPos.X.Scale, 
+                StartPos.X.Offset + delta.X,
+                StartPos.Y.Scale, 
+                StartPos.Y.Offset + delta.Y
+            )
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            Dragging = false
+        end
+    end)
+    
+    -- Close/Minimize
+    CloseBtn.MouseButton1Click:Connect(function()
+        ScreenGui:Destroy()
+        FishItPro:Stop()
+    end)
+    
+    local Minimized = false
+    MinBtn.MouseButton1Click:Connect(function()
+        Minimized = not Minimized
+        TweenService:Create(Content, TweenInfo.new(0.3), {
+            Size = Minimized and UDim2.new(1, -20, 0, 0) or UDim2.new(1, -20, 1, -50)
+        }):Play()
+        TweenService:Create(MainFrame, TweenInfo.new(0.3), {
+            Size = Minimized and UDim2.new(0, 320, 0, 45) or UDim2.new(0, 320, 0, 450)
+        }):Play()
+        MinBtn.Text = Minimized and "+" or "-"
+    end)
+    
+    -- Store UI references
+    UI.MainFrame = MainFrame
+    UI.StatusDot = StatusDot
+    UI.StatsText = StatsText
+    
+    print("✅ Fish It Pro GUI Loaded!")
+end
+
+-- Anti AFK
+function FishItPro:StartAntiAFK()
+    task.spawn(function()
+        while self.Config.AntiAFK and self.Config.Enabled do
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Space, false, game)
+            task.wait(0.1)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Space, false, game)
+            task.wait(math.random(30, 60))
+        end
+    end)
+end
+
+-- Instant Catch Method (OP Feature)
+function FishItPro:InstantCatch()
+    -- Method 1: Fire catch remote langsung tanpa reel
+    if Remotes.Catch then
+        for i = 1, 5 do -- Spam beberapa kali biar pasti
+            Remotes.Catch:FireServer()
+            task.wait(0.05)
+           BiteIndicator = {X = 0.5, Y = 0.3},   -- Posisi indikator "!"
 }
 
 -- State
