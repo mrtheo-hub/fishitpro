@@ -1,40 +1,561 @@
 --[[
-    Fish It Pro - Auto Fishing Script
-    Features: Instant Catch, Fast Reel, Auto Cast, Anti-AFK, Stats
-    Compatible: Most Roblox Executors (Level 3+)
+    Fish It Mobile - Premium GUI Edition
+    Features: Smooth animations, particle effects, modern design
+    Compatible: Ronix, Delta, Codex, Arceus X
 ]]
 
-local FishItPro = {}
+local PremiumFish = {}
 
--- Services
 local Players = game:GetService("Players")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
 local VirtualInputManager = game:GetService("VirtualInputManager")
-local TweenService = game:GetService("TweenService")
+local RunService = game:GetService("RunService")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local Lighting = game:GetService("Lighting")
 
 local LocalPlayer = Players.LocalPlayer
-local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 
--- Config System
-FishItPro.Config = {
+-- Config
+PremiumFish.Config = {
     Enabled = false,
-    InstantCatch = false,      -- Langsung dapet ikan tanpa reel
-    UltraFastReel = true,      -- Reel super cepat
-    AutoCast = true,           -- Auto lempar kail
-    AutoSell = false,          -- Auto jual ikan
-    AntiAFK = true,            -- Anti kick AFK
-    SafeMode = true,           -- Random delay biar natural
-    ReelSpeed = 0.03,          -- Kecepatan reel (detik)
-    InstantDelay = 0.1,        -- Delay instant catch
-    MaxReelTime = 3,           -- Maksimal waktu reel (detik)
-    SelectedRod = "Default",   -- Pilihan joran
-    AutoEquip = true,          -- Auto equip joran
-    Webhook = "",              -- Discord webhook untuk notif
-    Stats = {
-        TotalCaught = 0,
+    Mode = "Overnight",
+    Delays = {
+        Day = {Min = 0.15, Max = 0.30, Reaction = 0.25, Cast = 2.0},
+        Night = {Min = 0.12, Max = 0.22, Reaction = 0.20, Cast = 1.8},
+        Overnight = {Min = 0.20, Max = 0.40, Reaction = 0.35, Cast = 2.5}
+    },
+    Theme = {
+        Primary = Color3.fromRGB(0, 170, 255),
+        Secondary = Color3.fromRGB(30, 30, 40),
+        Accent = Color3.fromRGB(255, 50, 100),
+        Success = Color3.fromRGB(0, 255, 130),
+        Warning = Color3.fromRGB(255, 200, 50)
+    }
+}
+
+-- State
+PremiumFish.State = {
+    FishCount = 0,
+    SessionStart = 0,
+    IsFishing = false,
+    UI = {}
+}
+
+-- Animation Utility (Manual Lerp, tidak pakai TweenService berat)
+function PremiumFish:Animate(object, property, target, duration)
+    duration = duration or 0.3
+    local start = object[property]
+    local startTime = tick()
+    
+    task.spawn(function()
+        while tick() - startTime < duration do
+            local alpha = (tick() - startTime) / duration
+            -- Ease out quad
+            alpha = 1 - (1 - alpha) * (1 - alpha)
+            
+            if property == "Size" then
+                object.Size = UDim2.new(
+                    start.X.Scale + (target.X.Scale - start.X.Scale) * alpha,
+                    start.X.Offset + (target.X.Offset - start.X.Offset) * alpha,
+                    start.Y.Scale + (target.Y.Scale - start.Y.Scale) * alpha,
+                    start.Y.Offset + (target.Y.Offset - start.Y.Offset) * alpha
+                )
+            elseif property == "Position" then
+                object.Position = UDim2.new(
+                    start.X.Scale + (target.X.Scale - start.X.Scale) * alpha,
+                    start.X.Offset + (target.X.Offset - start.X.Offset) * alpha,
+                    start.Y.Scale + (target.Y.Scale - start.Y.Scale) * alpha,
+                    start.Y.Offset + (target.Y.Offset - start.Y.Offset) * alpha
+                )
+            elseif property == "BackgroundColor3" then
+                object.BackgroundColor3 = Color3.new(
+                    start.R + (target.R - start.R) * alpha,
+                    start.G + (target.G - start.G) * alpha,
+                    start.B + (target.B - start.B) * alpha
+                )
+            elseif property == "TextColor3" then
+                object.TextColor3 = Color3.new(
+                    start.R + (target.R - start.R) * alpha,
+                    start.G + (target.G - start.G) * alpha,
+                    start.B + (target.B - start.B) * alpha
+                )
+            elseif property == "BackgroundTransparency" then
+                object.BackgroundTransparency = start + (target - start) * alpha
+            elseif property == "TextTransparency" then
+                object.TextTransparency = start + (target - start) * alpha
+            elseif property == "Rotation" then
+                object.Rotation = start + (target - start) * alpha
+            end
+            
+            task.wait(0.016) -- ~60fps
+        end
+        
+        -- Set final value
+        object[property] = target
+    end)
+end
+
+-- Pulse Animation (Button breathing effect)
+function PremiumFish:PulseAnimation(button, baseColor, pulseColor)
+    task.spawn(function()
+        while button and button.Parent do
+            if not self.Config.Enabled then
+                -- Pulse slow when idle
+                for i = 0, 100, 2 do
+                    if not button.Parent then return end
+                    local alpha = math.sin(i / 100 * math.pi)
+                    button.BackgroundColor3 = baseColor:Lerp(pulseColor, alpha * 0.3)
+                    task.wait(0.05)
+                end
+            else
+                -- Pulse fast when active
+                for i = 0, 100, 5 do
+                    if not button.Parent then return end
+                    local alpha = math.sin(i / 100 * math.pi)
+                    button.BackgroundColor3 = baseColor:Lerp(self.Config.Theme.Accent, alpha * 0.5)
+                    task.wait(0.02)
+                end
+            end
+        end
+    end)
+end
+
+-- Particle Effect (Simple dots)
+function PremiumFish:CreateParticles(parent, color)
+    task.spawn(function()
+        while parent and parent.Parent and self.Config.Enabled do
+            local particle = Instance.new("Frame")
+            particle.Size = UDim2.new(0, math.random(4, 8), 0, math.random(4, 8))
+            particle.Position = UDim2.new(math.random(), 0, 1, 0)
+            particle.BackgroundColor3 = color
+            particle.BorderSizePixel = 0
+            particle.Parent = parent
+            
+            Instance.new("UICorner", particle).CornerRadius = UDim.new(1, 0)
+            
+            -- Animate up
+            task.spawn(function()
+                for i = 1, 50 do
+                    if not particle.Parent then return end
+                    particle.Position = UDim2.new(
+                        particle.Position.X.Scale,
+                        0,
+                        particle.Position.Y.Scale - 0.02,
+                        0
+                    )
+                    particle.BackgroundTransparency = i / 50
+                    task.wait(0.03)
+                end
+                particle:Destroy()
+            end)
+            
+            task.wait(0.2)
+        end
+    end)
+end
+
+-- Ripple Effect (Click feedback)
+function PremiumFish:Ripple(button, x, y)
+    local ripple = Instance.new("Frame")
+    ripple.Size = UDim2.new(0, 0, 0, 0)
+    ripple.Position = UDim2.new(0, x - button.AbsolutePosition.X, 0, y - button.AbsolutePosition.Y)
+    ripple.BackgroundColor3 = Color3.new(1, 1, 1)
+    ripple.BackgroundTransparency = 0.7
+    ripple.BorderSizePixel = 0
+    ripple.ZIndex = 10
+    ripple.Parent = button
+    
+    Instance.new("UICorner", ripple).CornerRadius = UDim.new(1, 0)
+    
+    -- Expand and fade
+    task.spawn(function()
+        for i = 1, 30 do
+            if not ripple.Parent then return end
+            local size = i * 10
+            ripple.Size = UDim2.new(0, size, 0, size)
+            ripple.Position = UDim2.new(0, x - button.AbsolutePosition.X - size/2, 0, y - button.AbsolutePosition.Y - size/2)
+            ripple.BackgroundTransparency = 0.7 + (i / 30) * 0.3
+            task.wait(0.016)
+        end
+        ripple:Destroy()
+    end)
+end
+
+-- Shake Animation (Error/Warning)
+function PremiumFish:Shake(object)
+    task.spawn(function()
+        local original = object.Position
+        for i = 1, 10 do
+            if not object.Parent then return end
+            local offset = math.sin(i) * 5
+            object.Position = UDim2.new(
+                original.X.Scale,
+                original.X.Offset + offset,
+                original.Y.Scale,
+                original.Y.Offset
+            )
+            task.wait(0.03)
+        end
+        object.Position = original
+    end)
+end
+
+-- Count Up Animation (Stats)
+function PremiumFish:CountUp(label, target, suffix)
+    task.spawn(function()
+        local current = 0
+        local step = math.ceil(target / 20)
+        
+        while current < target do
+            if not label.Parent then return end
+            current = math.min(current + step, target)
+            label.Text = tostring(current) .. (suffix or "")
+            task.wait(0.05)
+        end
+    end)
+end
+
+-- Gradient Effect (Simulated with multiple frames)
+function PremiumFish:CreateGradient(parent, color1, color2, direction)
+    local gradient = Instance.new("Frame")
+    gradient.Size = UDim2.new(1, 0, 1, 0)
+    gradient.BackgroundTransparency = 1
+    gradient.BorderSizePixel = 0
+    gradient.Parent = parent
+    
+    local steps = 10
+    for i = 1, steps do
+        local bar = Instance.new("Frame")
+        bar.Size = UDim2.new(1 / steps, 0, 1, 0)
+        bar.Position = UDim2.new((i - 1) / steps, 0, 0, 0)
+        bar.BorderSizePixel = 0
+        
+        local alpha = (i - 1) / (steps - 1)
+        bar.BackgroundColor3 = color1:Lerp(color2, alpha)
+        bar.Parent = gradient
+    end
+    
+    return gradient
+end
+
+-- Glow Effect (Shadow simulation)
+function PremiumFish:CreateGlow(parent, color, intensity)
+    local glow = Instance.new("Frame")
+    glow.Name = "Glow"
+    glow.Size = UDim2.new(1, 20, 1, 20)
+    glow.Position = UDim2.new(0, -10, 0, -10)
+    glow.BackgroundColor3 = color
+    glow.BackgroundTransparency = 1 - intensity
+    glow.BorderSizePixel = 0
+    glow.ZIndex = -1
+    glow.Parent = parent
+    
+    Instance.new("UICorner", glow).CornerRadius = UDim.new(0, 20)
+    
+    -- Pulse glow
+    task.spawn(function()
+        while glow.Parent do
+            for i = 0, 100, 2 do
+                if not glow.Parent then return end
+                local alpha = 0.5 + math.sin(i / 100 * math.pi * 2) * 0.3
+                glow.BackgroundTransparency = 1 - (intensity * alpha)
+                task.wait(0.03)
+            end
+        end
+    end)
+    
+    return glow
+end
+
+-- PREMIUM GUI
+function PremiumFish:CreatePremiumGUI()
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "PremiumUI_" .. math.random(10000, 99999)
+    screen.Parent = CoreGui
+    
+    -- Main Container
+    local main = Instance.new("Frame")
+    main.Name = "MainContainer"
+    main.Size = UDim2.new(0, 320, 0, 500)
+    main.Position = UDim2.new(1, -340, 0.5, -250)
+    main.BackgroundColor3 = self.Config.Theme.Secondary
+    main.BorderSizePixel = 0
+    main.ClipsDescendants = true
+    main.Visible = false -- Start hidden, animate in
+    main.Parent = screen
+    
+    Instance.new("UICorner", main).CornerRadius = UDim.new(0, 20)
+    
+    -- Glow effect
+    self:CreateGlow(main, self.Config.Theme.Primary, 0.15)
+    
+    -- Header
+    local header = Instance.new("Frame")
+    header.Size = UDim2.new(1, 0, 0, 70)
+    header.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    header.BorderSizePixel = 0
+    header.Parent = main
+    
+    Instance.new("UICorner", header).CornerRadius = UDim.new(0, 20)
+    
+    -- Gradient line
+    local gradLine = Instance.new("Frame")
+    gradLine.Size = UDim2.new(1, 0, 0, 3)
+    gradLine.Position = UDim2.new(0, 0, 1, -3)
+    gradLine.BorderSizePixel = 0
+    gradLine.Parent = header
+    
+    -- Animated gradient
+    task.spawn(function()
+        while gradLine.Parent do
+            for i = 0, 100 do
+                if not gradLine.Parent then return end
+                gradLine.BackgroundColor3 = Color3.fromHSV(i / 100, 0.8, 1)
+                task.wait(0.05)
+            end
+        end
+    end)
+    
+    -- Title with icon
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(0.7, 0, 1, 0)
+    title.Position = UDim2.new(0, 20, 0, 0)
+    title.BackgroundTransparency = 1
+    title.Text = "🎣 FISH IT PRO"
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.TextSize = 22
+    title.Font = Enum.Font.GothamBold
+    title.TextXAlignment = Enum.TextXAlignment.Left
+    title.Parent = header
+    
+    -- Status dot
+    local statusDot = Instance.new("Frame")
+    statusDot.Size = UDim2.new(0, 12, 0, 12)
+    statusDot.Position = UDim2.new(1, -60, 0.5, -6)
+    statusDot.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+    statusDot.BorderSizePixel = 0
+    statusDot.Parent = header
+    
+    Instance.new("UICorner", statusDot).CornerRadius = UDim.new(1, 0)
+    
+    -- Pulse animation for status
+    task.spawn(function()
+        while statusDot.Parent do
+            for i = 0, 100, 3 do
+                if not statusDot.Parent then return end
+                local size = 12 + math.sin(i / 100 * math.pi) * 4
+                statusDot.Size = UDim2.new(0, size, 0, size)
+                statusDot.Position = UDim2.new(1, -60 - size/2 + 6, 0.5, -size/2 + 6)
+                task.wait(0.03)
+            end
+        end
+    end)
+    
+    -- Close button with hover
+    local closeBtn = Instance.new("TextButton")
+    closeBtn.Size = UDim2.new(0, 35, 0, 35)
+    closeBtn.Position = UDim2.new(1, -45, 0, 17)
+    closeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    closeBtn.Text = "✕"
+    closeBtn.TextColor3 = Color3.new(1, 1, 1)
+    closeBtn.TextSize = 18
+    closeBtn.Font = Enum.Font.GothamBold
+    closeBtn.Parent = header
+    
+    Instance.new("UICorner", closeBtn).CornerRadius = UDim.new(0, 10)
+    
+    -- Hover effect
+    closeBtn.MouseEnter:Connect(function()
+        self:Animate(closeBtn, "BackgroundColor3", Color3.fromRGB(255, 70, 70), 0.2)
+    end)
+    closeBtn.MouseLeave:Connect(function()
+        self:Animate(closeBtn, "BackgroundColor3", Color3.fromRGB(60, 60, 70), 0.2)
+    end)
+    
+    -- Main Toggle Button (Big)
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Name = "MainToggle"
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 70)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 90)
+    toggleBtn.BackgroundColor3 = self.Config.Theme.Success
+    toggleBtn.Text = "▶ START FISHING"
+    toggleBtn.TextColor3 = Color3.new(1, 1, 1)
+    toggleBtn.TextSize = 20
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.Parent = main
+    
+    Instance.new("UICorner", toggleBtn).CornerRadius = UDim.new(0, 15)
+    
+    -- Glow
+    local toggleGlow = Instance.new("Frame")
+    toggleGlow.Size = UDim2.new(1, 30, 1, 30)
+    toggleGlow.Position = UDim2.new(0, -15, 0, -15)
+    toggleGlow.BackgroundColor3 = self.Config.Theme.Success
+    toggleGlow.BackgroundTransparency = 0.9
+    toggleGlow.BorderSizePixel = 0
+    toggleGlow.ZIndex = -1
+    toggleGlow.Parent = toggleBtn
+    
+    Instance.new("UICorner", toggleGlow).CornerRadius = UDim.new(0, 25)
+    
+    -- Pulse animation
+    self:PulseAnimation(toggleBtn, self.Config.Theme.Success, Color3.fromRGB(100, 255, 150))
+    
+    -- Ripple on click
+    toggleBtn.MouseButton1Click:Connect(function(x, y)
+        self:Ripple(toggleBtn, x, y)
+    end)
+    
+    -- Mode Selector (Card style)
+    local modeCard = Instance.new("Frame")
+    modeCard.Size = UDim2.new(0.9, 0, 0, 100)
+    modeCard.Position = UDim2.new(0.05, 0, 0, 175)
+    modeCard.BackgroundColor3 = Color3.fromRGB(45, 45, 60)
+    modeCard.BorderSizePixel = 0
+    modeCard.Parent = main
+    
+    Instance.new("UICorner", modeCard).CornerRadius = UDim.new(0, 15)
+    
+    -- Mode title
+    local modeTitle = Instance.new("TextLabel")
+    modeTitle.Size = UDim2.new(1, -20, 0, 30)
+    modeTitle.Position = UDim2.new(0, 10, 0, 5)
+    modeTitle.BackgroundTransparency = 1
+    modeTitle.Text = "SELECT MODE"
+    modeTitle.TextColor3 = Color3.fromRGB(150, 150, 170)
+    modeTitle.TextSize = 12
+    modeTitle.Font = Enum.Font.GothamBold
+    modeTitle.TextXAlignment = Enum.TextXAlignment.Left
+    modeTitle.Parent = modeCard
+    
+    -- Mode buttons container
+    local modeContainer = Instance.new("Frame")
+    modeContainer.Size = UDim2.new(1, -20, 0, 50)
+    modeContainer.Position = UDim2.new(0, 10, 0, 40)
+    modeContainer.BackgroundTransparency = 1
+    modeContainer.Parent = modeCard
+    
+    local modes = {
+        {Name = "🌙", Label = "Overnight", Safe = true, Color = Color3.fromRGB(100, 100, 255)},
+        {Name = "🌅", Label = "Day", Safe = false, Color = Color3.fromRGB(255, 200, 100)},
+        {Name = "⚡", Label = "Fast", Safe = false, Color = Color3.fromRGB(255, 100, 100)}
+    }
+    
+    local modeButtons = {}
+    local selectedMode = 1
+    
+    for i, mode in ipairs(modes) do
+        local btn = Instance.new("TextButton")
+        btn.Size = UDim2.new(0.3, -5, 1, 0)
+        btn.Position = UDim2.new((i-1) * 0.33, 0, 0, 0)
+        btn.BackgroundColor3 = i == 1 and mode.Color or Color3.fromRGB(60, 60, 75)
+        btn.Text = mode.Name .. "\n" .. mode.Label
+        btn.TextColor3 = Color3.new(1, 1, 1)
+        btn.TextSize = 11
+        btn.Font = Enum.Font.GothamBold
+        btn.Parent = modeContainer
+        
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 10)
+        
+        -- Safe indicator
+        if mode.Safe then
+            local safeBadge = Instance.new("TextLabel")
+            safeBadge.Size = UDim2.new(0, 40, 0, 18)
+            safeBadge.Position = UDim2.new(0.5, -20, 0, -9)
+            safeBadge.BackgroundColor3 = self.Config.Theme.Success
+            safeBadge.Text = "SAFE"
+            safeBadge.TextColor3 = Color3.new(1, 1, 1)
+            safeBadge.TextSize = 9
+            safeBadge.Font = Enum.Font.GothamBold
+            safeBadge.Parent = btn
+            
+            Instance.new("UICorner", safeBadge).CornerRadius = UDim.new(0, 9)
+        end
+        
+        btn.MouseButton1Click:Connect(function()
+            selectedMode = i
+            self.Config.Mode = mode.Label
+            
+            -- Animate all buttons
+            for j, otherBtn in ipairs(modeButtons) do
+                if j == i then
+                    self:Animate(otherBtn, "BackgroundColor3", modes[j].Color, 0.3)
+                    self:Animate(otherBtn, "Size", UDim2.new(0.3, -5, 1.1, 0), 0.2)
+                else
+                    self:Animate(otherBtn, "BackgroundColor3", Color3.fromRGB(60, 60, 75), 0.3)
+                    self:Animate(otherBtn, "Size", UDim2.new(0.3, -5, 1, 0), 0.2)
+                end
+            end
+            
+            -- Shake if not safe
+            if not mode.Safe then
+                self:Shake(modeCard)
+            end
+        end)
+        
+        table.insert(modeButtons, btn)
+    end
+    
+    -- Stats Panel (Glassmorphism style)
+    local statsPanel = Instance.new("Frame")
+    statsPanel.Size = UDim2.new(0.9, 0, 0, 140)
+    statsPanel.Position = UDim2.new(0.05, 0, 0, 290)
+    statsPanel.BackgroundColor3 = Color3.fromRGB(50, 50, 65)
+    statsPanel.BackgroundTransparency = 0.3
+    statsPanel.BorderSizePixel = 0
+    statsPanel.Parent = main
+    
+    Instance.new("UICorner", statsPanel).CornerRadius = UDim.new(0, 15)
+    
+    -- Stats title
+    local statsTitle = Instance.new("TextLabel")
+    statsTitle.Size = UDim2.new(1, -20, 0, 25)
+    statsTitle.Position = UDim2.new(0, 10, 0, 10)
+    statsTitle.BackgroundTransparency = 1
+    statsTitle.Text = "📊 STATISTICS"
+    statsTitle.TextColor3 = Color3.fromRGB(200, 200, 220)
+    statsTitle.TextSize = 14
+    statsTitle.Font = Enum.Font.GothamBold
+    statsTitle.TextXAlignment = Enum.TextXAlignment.Left
+    statsTitle.Parent = statsPanel
+    
+    -- Fish count (big number)
+    local fishCount = Instance.new("TextLabel")
+    fishCount.Name = "FishCount"
+    fishCount.Size = UDim2.new(0.5, 0, 0, 50)
+    fishCount.Position = UDim2.new(0, 10, 0, 40)
+    fishCount.BackgroundTransparency = 1
+    fishCount.Text = "0"
+    fishCount.TextColor3 = self.Config.Theme.Primary
+    fishCount.TextSize = 40
+    fishCount.Font = Enum.Font.GothamBold
+    fishCount.Parent = statsPanel
+    
+    local fishLabel = Instance.new("TextLabel")
+    fishLabel.Size = UDim2.new(0.5, 0, 0, 20)
+    fishLabel.Position = UDim2.new(0, 10, 0, 90)
+    fishLabel.BackgroundTransparency = 1
+    fishLabel.Text = "FISH CAUGHT"
+    fishLabel.TextColor3 = Color3.fromRGB(150, 150, 170)
+    fishLabel.TextSize = 11
+    fishLabel.Font = Enum.Font.Gotham
+    fishLabel.TextXAlignment = Enum.TextXAlignment.Left
+    fishLabel.Parent = statsPanel
+    
+    -- Session time
+    local timeLabel = Instance.new("TextLabel")
+    timeLabel.Name = "TimeLabel"
+    timeLabel.Size = UDim2.new(0.5, -10, 0, 30)
+    timeLabel.Position = UDim2.new(0.5, 0, 0, 50)
+    timeLabel.BackgroundTransparency = 1
+    timeLabel.Text = "00:00"
+    timeLabel.TextColor3 = Color3.new(1, 1, 1)
+    timeLabel.TextSize = 24
+    timeLabel.Font = Enum.Font.GothamBold
+    timeLabel.Parent = statsPanel
+    
+    local timeSub = Instance.new("TextLabel")
+    timeSub.Size = UDim2.new(0.5,        TotalCaught = 0,
         SessionCaught = 0,
         RareCaught = 0,
         StartTime = tick()
