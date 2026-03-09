@@ -1,0 +1,420 @@
+--[[
+    Fish It Silent - BAC Resistant
+    Strategy: Zero remote calls, pure input simulation, pixel detection
+]]
+
+local SilentFish = {}
+
+-- Services
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+
+local LocalPlayer = Players.LocalPlayer
+
+-- Config
+SilentFish.Config = {
+    Enabled = false,
+    Mode = "Legit", -- "Legit", "Fast", "Silent"
+    DetectionType = "Visual", -- "Visual", "Audio", "Vibration"
+    
+    -- Humanization
+    MinDelay = 0.08,
+    MaxDelay = 0.18,
+    ReactionMin = 0.15,  -- Delay react ke gigitan (human-like)
+    ReactionMax = 0.35,
+    
+    -- Safety
+    MaxFishPerHour = 120,  -- Limit biar gak suspicious
+    BreakInterval = 300,   -- Istirahat 5 menit tiap...
+    BreakDuration = 60,    -- ...1 menit
+    
+    -- Position (sesuaikan UI game)
+    CastButton = {X = 0.5, Y = 0.8},      -- Posisi tombol cast (normalized)
+    ReelArea = {X1 = 0.3, Y1 = 0.6, X2 = 0.7, Y2 = 0.9}, -- Area reel
+    BiteIndicator = {X = 0.5, Y = 0.3},   -- Posisi indikator "!"
+}
+
+-- State
+SilentFish.State = {
+    IsFishing = false,
+    FishCount = 0,
+    StartTime = tick(),
+    LastBreak = tick(),
+    ConsecutiveClicks = 0
+}
+
+-- GUI Sederhana (Anti-Detection: pake Drawing lib atau native UI)
+function SilentFish:CreateSilentGUI()
+    -- Gunakan Drawing API (lebih stealth dari Instance baru)
+    -- Atau pake CoreGui yang sudah ada (inject ke existing UI)
+    
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "RobloxGui_" .. math.random(100000, 999999)  -- Camouflage name
+    ScreenGui.Parent = CoreGui
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+    
+    -- Frame kecil, transparan, corner
+    local Frame = Instance.new("Frame")
+    Frame.Size = UDim2.new(0, 200, 0, 120)
+    Frame.Position = UDim2.new(0, 50, 0.5, -60)
+    Frame.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    Frame.BackgroundTransparency = 0.1
+    Frame.BorderSizePixel = 0
+    Frame.Parent = ScreenGui
+    
+    local Corner = Instance.new("UICorner")
+    Corner.CornerRadius = UDim.new(0, 8)
+    Corner.Parent = Frame
+    
+    -- Title
+    local Title = Instance.new("TextLabel")
+    Title.Size = UDim2.new(1, 0, 0, 30)
+    Title.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    Title.Text = "⚡ Silent Fish"
+    Title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Title.TextSize = 14
+    Title.Font = Enum.Font.GothamBold
+    Title.Parent = Frame
+    
+    local TitleCorner = Instance.new("UICorner")
+    TitleCorner.CornerRadius = UDim.new(0, 8)
+    TitleCorner.Parent = Title
+    
+    -- Status
+    local Status = Instance.new("TextLabel")
+    Status.Name = "Status"
+    Status.Size = UDim2.new(1, -20, 0, 25)
+    Status.Position = UDim2.new(0, 10, 0, 40)
+    Status.BackgroundTransparency = 1
+    Status.Text = "Status: Idle"
+    Status.TextColor3 = Color3.fromRGB(200, 200, 200)
+    Status.TextSize = 12
+    Status.Font = Enum.Font.Gotham
+    Status.TextXAlignment = Enum.TextXAlignment.Left
+    Status.Parent = Frame
+    
+    -- Toggle Button
+    local Toggle = Instance.new("TextButton")
+    Toggle.Size = UDim2.new(0.8, 0, 0, 35)
+    Toggle.Position = UDim2.new(0.1, 0, 0, 75)
+    Toggle.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+    Toggle.Text = "START"
+    Toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    Toggle.TextSize = 14
+    Toggle.Font = Enum.Font.GothamBold
+    Toggle.Parent = Frame
+    
+    local ToggleCorner = Instance.new("UICorner")
+    ToggleCorner.CornerRadius = UDim.new(0, 6)
+    ToggleCorner.Parent = Toggle
+    
+    -- Mode Selection
+    local ModeBtn = Instance.new("TextButton")
+    ModeBtn.Size = UDim2.new(0, 60, 0, 20)
+    ModeBtn.Position = UDim2.new(1, -70, 0, 5)
+    ModeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    ModeBtn.Text = "Legit"
+    ModeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    ModeBtn.TextSize = 10
+    ModeBtn.Font = Enum.Font.Gotham
+    ModeBtn.Parent = Frame
+    
+    ModeBtn.MouseButton1Click:Connect(function()
+        local modes = {"Legit", "Fast", "Silent"}
+        local current = table.find(modes, SilentFish.Config.Mode) or 1
+        local next = current % #modes + 1
+        SilentFish.Config.Mode = modes[next]
+        ModeBtn.Text = modes[next]
+        
+        -- Update config berdasar mode
+        if SilentFish.Config.Mode == "Legit" then
+            SilentFish.Config.MinDelay = 0.15
+            SilentFish.Config.MaxDelay = 0.25
+            SilentFish.Config.MaxFishPerHour = 80
+        elseif SilentFish.Config.Mode == "Fast" then
+            SilentFish.Config.MinDelay = 0.08
+            SilentFish.Config.MaxDelay = 0.15
+            SilentFish.Config.MaxFishPerHour = 120
+        else -- Silent
+            SilentFish.Config.MinDelay = 0.05
+            SilentFish.Config.MaxDelay = 0.10
+            SilentFish.Config.MaxFishPerHour = 200
+        end
+    end)
+    
+    -- Toggle Logic
+    Toggle.MouseButton1Click:Connect(function()
+        SilentFish.Config.Enabled = not SilentFish.Config.Enabled
+        
+        if SilentFish.Config.Enabled then
+            Toggle.Text = "STOP"
+            Toggle.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            Status.Text = "Status: Running (" .. SilentFish.Config.Mode .. ")"
+            SilentFish:Start()
+        else
+            Toggle.Text = "START"
+            Toggle.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+            Status.Text = "Status: Idle"
+            SilentFish:Stop()
+        end
+    end)
+    
+    -- Update status loop
+    task.spawn(function()
+        while Frame.Parent do
+            task.wait(1)
+            if SilentFish.Config.Enabled then
+                local elapsed = math.floor((tick() - SilentFish.State.StartTime) / 60)
+                local fish = SilentFish.State.FishCount
+                local rate = elapsed > 0 and math.floor(fish / elapsed * 60) or 0
+                Status.Text = string.format("Fish: %d | %d/min | %dm", fish, rate, elapsed)
+            end
+        end
+    end)
+    
+    -- Drag
+    local dragging = false
+    local dragStart, startPos
+    
+    Frame.InputBegan:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 and input.Position.Y < Frame.AbsolutePosition.Y + 30 then
+            dragging = true
+            dragStart = input.Position
+            startPos = Frame.Position
+        end
+    end)
+    
+    UserInputService.InputChanged:Connect(function(input)
+        if dragging and input.UserInputType == Enum.UserInputType.MouseMovement then
+            local delta = input.Position - dragStart
+            Frame.Position = UDim2.new(startPos.X.Scale, startPos.X.Offset + delta.X, startPos.Y.Scale, startPos.Y.Offset + delta.Y)
+        end
+    end)
+    
+    UserInputService.InputEnded:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = false
+        end
+    end)
+end
+
+-- Get Screen Position (normalized to absolute)
+function SilentFish:GetScreenPos(normalizedX, normalizedY)
+    local camera = workspace.CurrentCamera
+    local viewport = camera.ViewportSize
+    return {
+        X = math.floor(normalizedX * viewport.X),
+        Y = math.floor(normalizedY * viewport.Y)
+    }
+end
+
+-- Humanized Click (BAC tidak bisa bedain dari human)
+function SilentFish:HumanClick(x, y, duration)
+    duration = duration or math.random(
+        math.floor(self.Config.MinDelay * 1000), 
+        math.floor(self.Config.MaxDelay * 1000)
+    ) / 1000
+    
+    -- Pre-movement (realistic)
+    VirtualInputManager:SendMouseMoveEvent(x + math.random(-5, 5), y + math.random(-5, 5), game)
+    task.wait(math.random(0.05, 0.12))
+    
+    -- Click down
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
+    task.wait(duration)
+    
+    -- Click up
+    VirtualInputManager:SendMouseButtonEvent(x, y, 0, false, game, 0)
+    
+    -- Post-movement
+    task.wait(math.random(0.03, 0.08))
+    
+    self.State.ConsecutiveClicks += 1
+    
+    -- Random pause setiap 10-20 click (human fatigue)
+    if self.State.ConsecutiveClicks > math.random(10, 20) then
+        task.wait(math.random(0.3, 0.8))
+        self.State.ConsecutiveClicks = 0
+    end
+end
+
+-- Visual Detection (BAC gak bisa detect ini)
+function SilentFish:DetectBiteVisual()
+    -- Method 1: Cek UI Text "!" atau "BITE"
+    local PlayerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not PlayerGui then return false end
+    
+    -- Cari semua TextLabel yang visible
+    for _, gui in pairs(PlayerGui:GetDescendants()) do
+        if gui:IsA("TextLabel") and gui.Visible then
+            local text = gui.Text:lower()
+            if text:find("!") or text:find("bite") or text:find("fish") or text:find("pull") then
+                -- Verifikasi posisi (biasanya di tengah layar)
+                local pos = gui.AbsolutePosition
+                local size = gui.AbsoluteSize
+                local centerX = pos.X + size.X/2
+                local centerY = pos.Y + size.Y/2
+                
+                -- Cek kalau di area yang masuk akal
+                if centerY < 400 and centerY > 100 then  -- Upper middle area
+                    return true, gui
+                end
+            end
+        end
+        
+        -- Cek ImageLabel (ikon seru/exclamation)
+        if gui:IsA("ImageLabel") and gui.Visible and gui.Image ~= "" then
+            if gui.Name:lower():find("alert") or gui.Name:lower():find("bite") or gui.Name:lower():find("exclamation") then
+                return true, gui
+            end
+        end
+    end
+    
+    -- Method 2: Cek perubahan di area indikator (gunakan cache)
+    -- (Ini butuh screenshot comparison, complex di Roblox)
+    
+    return false
+end
+
+-- Audio Detection (kalau game ada suara bite)
+function SilentFish:DetectBiteAudio()
+    -- Roblox limit audio access dari client script
+    -- Tapi bisa detect Sound instances yang play
+    for _, sound in pairs(workspace:GetDescendants()) do
+        if sound:IsA("Sound") and sound.Playing then
+            local name = sound.Name:lower()
+            if name:find("bite") or name:find("splash") or name:find("alert") then
+                return true
+            end
+        end
+    end
+    return false
+end
+
+-- Check Safety Limits
+function SilentFish:CheckSafety()
+    local now = tick()
+    local runtime = now - self.State.StartTime
+    local fishRate = self.State.FishCount / (runtime / 3600)  -- per hour
+    
+    -- Check max fish per hour
+    if fishRate > self.Config.MaxFishPerHour then
+        print("⚠️ Rate limit reached, taking break...")
+        task.wait(math.random(60, 120))
+        self.State.StartTime = now
+        self.State.FishCount = 0
+    end
+    
+    -- Check break interval
+    if now - self.State.LastBreak > self.Config.BreakInterval then
+        print("☕ Taking scheduled break...")
+        task.wait(self.Config.BreakDuration)
+        self.State.LastBreak = now
+    end
+    
+    return true
+end
+
+-- Main Fishing Logic
+function SilentFish:FishingLoop()
+    while self.Config.Enabled do
+        if not self:CheckSafety() then
+            task.wait(1)
+            continue
+        end
+        
+        -- Step 1: Cast (kalau belum fishing)
+        if not self.State.IsFishing then
+            local castPos = self:GetScreenPos(self.Config.CastButton.X, self.Config.CastButton.Y)
+            self:HumanClick(castPos.X, castPos.Y, 0.1)
+            self.State.IsFishing = true
+            task.wait(1.5 + math.random(0.5, 1.0))  -- Tunggu kail turun
+        end
+        
+        -- Step 2: Wait for bite dengan reaction time human-like
+        local biteDetected = false
+        local waitStart = tick()
+        
+        while tick() - waitStart < 15 do  -- Max wait 15 detik
+            if self:DetectBiteVisual() or self:DetectBiteAudio() then
+                -- Human reaction delay
+                task.wait(math.random(
+                    self.Config.ReactionMin * 100, 
+                    self.Config.ReactionMax * 100
+                ) / 100)
+                biteDetected = true
+                break
+            end
+            task.wait(0.05)  -- Poll rate
+        end
+        
+        -- Step 3: Reel
+        if biteDetected then
+            print("🐟 Fish on! Reeling...")
+            
+            -- Reel dengan pola human-like (bukan spam flat)
+            local reelStart = tick()
+            local reelDuration = math.random(2, 4)
+            
+            while tick() - reelStart < reelDuration do
+                -- Random position dalam area reel
+                local reelX = math.random(
+                    self.Config.ReelArea.X1 * 100, 
+                    self.Config.ReelArea.X2 * 100
+                ) / 100
+                local reelY = math.random(
+                    self.Config.ReelArea.Y1 * 100, 
+                    self.Config.ReelArea.Y2 * 100
+                ) / 100
+                
+                local pos = self:GetScreenPos(reelX, reelY)
+                self:HumanClick(pos.X, pos.Y)
+                
+                -- Cek kalau masih biting
+                if not self:DetectBiteVisual() and not self:DetectBiteAudio() then
+                    task.wait(0.5)
+                    if not self:DetectBiteVisual() then
+                        break  -- Fish caught or escaped
+                    end
+                end
+            end
+            
+            self.State.FishCount += 1
+            self.State.IsFishing = false
+            task.wait(math.random(0.8, 1.5))  -- Cooldown sebelum cast ulang
+            
+        else
+            -- Timeout, cast ulang
+            self.State.IsFishing = false
+        end
+        
+        task.wait(0.1)
+    end
+end
+
+function SilentFish:Start()
+    print("🎣 Silent Fish Started")
+    print("Mode:", self.Config.Mode)
+    print("Safety: Max", self.Config.MaxFishPerHour, "fish/hour")
+    
+    self.State.StartTime = tick()
+    self.State.LastBreak = tick()
+    
+    task.spawn(function()
+        self:FishingLoop()
+    end)
+end
+
+function SilentFish:Stop()
+    self.Config.Enabled = false
+    self.State.IsFishing = false
+    print("⏹️ Stopped")
+end
+
+-- Initialize
+SilentFish:CreateSilentGUI()
+
+return SilentFish
