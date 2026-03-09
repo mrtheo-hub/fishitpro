@@ -1,39 +1,478 @@
 --[[
-    Fish It Mobile Touch - BAC Proof
-    Compatible: Arceus X, Delta, Fluxus, Codex Mobile
+    Fish It - Ronix Executor Edition
+    Method: FireClickDetector + FireTouchInterest (tidak pakai VirtualInputManager)
 ]]
 
-local MobileFish = {}
+local RonixFish = {}
 
 local Players = game:GetService("Players")
-local UserInputService = game:GetService("UserInputService")
 local CoreGui = game:GetService("CoreGui")
-local RunService = game:GetService("RunService")
-local TweenService = game:GetService("TweenService")
+local Workspace = game:GetService("Workspace")
 
 local LocalPlayer = Players.LocalPlayer
 
--- Config (Ultra Conservative untuk 24/7)
-MobileFish.Config = {
+-- Config
+RonixFish.Config = {
     Enabled = false,
-    Mode = "Overnight", -- "Safe", "Normal", "Overnight"
+    Mode = "Safe",
     
-    -- Delays per mode (CRITICAL: jangan kurangin!)
+    -- Timing (jangan terlalu cepat!)
     Delays = {
-        Safe = {Base = 0.30, Var = 0.20, Reaction = 0.40},
-        Normal = {Base = 0.20, Var = 0.15, Reaction = 0.30},
-        Overnight = {Base = 0.35, Var = 0.25, Reaction = 0.50} -- Paling aman
+        Safe = {Cast = 3.0, Reel = 0.5, Reaction = 0.6, Between = 2.0},
+        Normal = {Cast = 2.0, Reel = 0.3, Reaction = 0.4, Between = 1.2}
     },
     
-    -- 24/7 Safety
-    MaxFishPerSession = 30,      -- Stop setelah 30 fish
-    SessionMinutes = 60,         -- Max 1 jam
-    BreakAfterFish = 10,         -- Istirahat tiap 10 fish
-    BreakDuration = 120,         -- 2 menit break
+    Limits = {
+        MaxFish = 20,
+        MaxTime = 30, -- minutes
+        BreakEvery = 5,
+        BreakTime = 60
+    }
+}
+
+-- State
+RonixFish.State = {
+    Running = false,
+    Fishing = false,
+    FishCount = 0,
+    StartTime = 0,
+    CastCD = nil,
+    ReelCD = nil
+}
+
+-- Cari ClickDetectors di workspace (untuk Cast)
+function RonixFish:FindCastDetector()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ClickDetector") then
+            local name = obj.Parent.Name:lower()
+            if name:find("cast") or name:find("rod") or name:find("fish") then
+                print("Found Cast:", obj.Parent.Name)
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+-- Cari TouchInterest untuk reel (kalau ada)
+function RonixFish:FindReelTouch()
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("TouchTransmitter") or obj:IsA("TouchInterest") then
+            local parent = obj.Parent
+            if parent and (parent.Name:lower():find("reel") or parent.Name:lower():find("water")) then
+                return parent
+            end
+        end
+    end
+    return nil
+end
+
+-- Cari ProximityPrompt (alternative)
+function RonixFish:FindPrompts()
+    local cast = nil
+    local reel = nil
     
-    -- Touch simulation
-    TouchJitter = 20,            -- Pixel randomization
-    HoldMin = 80,                -- ms (jangan <50!)
+    for _, obj in pairs(Workspace:GetDescendants()) do
+        if obj:IsA("ProximityPrompt") then
+            local name = obj.ActionText:lower()
+            if name:find("cast") or name:find("fish") then
+                cast = obj
+                print("Found Prompt Cast:", obj.ActionText)
+            elseif name:find("reel") or name:find("pull") then
+                reel = obj
+                print("Found Prompt Reel:", obj.ActionText)
+            end
+        end
+    end
+    
+    return cast, reel
+end
+
+-- Cari RemoteEvents (last resort - risky!)
+function RonixFish:FindRemotes()
+    local cast = nil
+    local reel = nil
+    local catch = nil
+    
+    for _, obj in pairs(game:GetDescendants()) do
+        if obj:IsA("RemoteEvent") then
+            local name = obj.Name:lower()
+            if name:find("cast") or name:find("throw") then
+                cast = obj
+            elseif name:find("reel") or name:find("pull") then
+                reel = obj
+            elseif name:find("catch") or name:find("collect") then
+                catch = obj
+            end
+        end
+    end
+    
+    return cast, reel, catch
+end
+
+-- Detect bite via UI
+function RonixFish:DetectBite()
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not playerGui then return false end
+    
+    for _, gui in pairs(playerGui:GetDescendants()) do
+        if gui:IsA("TextLabel") and gui.Visible then
+            local text = gui.Text:lower()
+            if text:find("!") or text:find("bite") or text:find("now") or text:find("pull") then
+                return true
+            end
+        end
+        if gui:IsA("ImageLabel") and gui.Visible then
+            local name = gui.Name:lower()
+            if name:find("alert") or name:find("exclaim") or name:find("bite") then
+                return true
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Main method: FireClickDetector
+function RonixFish:DoCast()
+    if self.State.CastCD then
+        -- Ronix method
+        pcall(function()
+            fireclickdetector(self.State.CastCD)
+        end)
+        return true
+    end
+    
+    -- Try ProximityPrompt
+    local castPrompt = self.State.CastPrompt
+    if castPrompt then
+        pcall(function()
+            fireproximityprompt(castPrompt)
+        end)
+        return true
+    end
+    
+    -- Try Remote (last resort)
+    if self.State.CastRemote then
+        pcall(function()
+            self.State.CastRemote:FireServer()
+        end)
+        return true
+    end
+    
+    return false
+end
+
+function RonixFish:DoReel()
+    -- Try TouchInterest
+    if self.State.ReelTouch then
+        pcall(function()
+            firetouchinterest(LocalPlayer.Character.HumanoidRootPart, self.State.ReelTouch, 0)
+            task.wait(0.1)
+            firetouchinterest(LocalPlayer.Character.HumanoidRootPart, self.State.ReelTouch, 1)
+        end)
+        return true
+    end
+    
+    -- Try ProximityPrompt
+    if self.State.ReelPrompt then
+        pcall(function()
+            fireproximityprompt(self.State.ReelPrompt)
+        end)
+        return true
+    end
+    
+    -- Try Remote
+    if self.State.ReelRemote then
+        pcall(function()
+            self.State.ReelRemote:FireServer()
+        end)
+        return true
+    end
+    
+    return false
+end
+
+-- Initialize scanning
+function RonixFish:Init()
+    print("🔍 Scanning game...")
+    
+    -- Method 1: ClickDetectors
+    self.State.CastCD = self:FindCastDetector()
+    
+    -- Method 2: TouchInterests
+    self.State.ReelTouch = self:FindReelTouch()
+    
+    -- Method 3: ProximityPrompts
+    local castP, reelP = self:FindPrompts()
+    self.State.CastPrompt = castP
+    self.State.ReelPrompt = reelP
+    
+    -- Method 4: Remotes (risky tapi backup)
+    local castR, reelR, catchR = self:FindRemotes()
+    self.State.CastRemote = castR
+    self.State.ReelRemote = reelR
+    self.State.CatchRemote = catchR
+    
+    -- Summary
+    print("=== SCAN RESULT ===")
+    print("Cast ClickDetector:", self.State.CastCD and "YES" or "NO")
+    print("Cast Prompt:", castP and "YES" or "NO")
+    print("Cast Remote:", castR and "YES" or "NO")
+    print("Reel Touch:", self.State.ReelTouch and "YES" or "NO")
+    print("Reel Prompt:", reelP and "YES" or "NO")
+    print("Reel Remote:", reelR and "YES" or "NO")
+    print("==================")
+    
+    return (self.State.CastCD or castP or castR) and (reelP or reelR or self.State.ReelTouch)
+end
+
+-- Random wait
+function RonixFish:Wait(min, max)
+    max = max or min * 1.5
+    task.wait(min + math.random() * (max - min))
+end
+
+-- Main loop
+function RonixFish:Loop()
+    local delays = self.Config.Delays[self.Config.Mode]
+    
+    while self.Config.Enabled do
+        -- Check limits
+        if self.State.FishCount >= self.Config.Limits.MaxFish then
+            print("🛑 Max fish reached")
+            break
+        end
+        
+        local elapsed = (tick() - self.State.StartTime) / 60
+        if elapsed >= self.Config.Limits.MaxTime then
+            print("🛑 Time limit")
+            break
+        end
+        
+        -- Break
+        if self.State.FishCount > 0 and self.State.FishCount % self.Config.Limits.BreakEvery == 0 then
+            print("☕ Break time")
+            task.wait(self.Config.Limits.BreakTime)
+        end
+        
+        -- Cast
+        if not self.State.Fishing then
+            print("🎣 Casting...")
+            self:DoCast()
+            self.State.Fishing = true
+            self:Wait(delays.Cast)
+        end
+        
+        -- Wait bite
+        local biteStart = tick()
+        local gotBite = false
+        
+        while (tick() - biteStart) < 10 do
+            if self:DetectBite() then
+                self:Wait(delays.Reaction)
+                gotBite = true
+                print("🐟 Bite!")
+                break
+            end
+            task.wait(0.1)
+        end
+        
+        -- Reel
+        if gotBite then
+            local reelStart = tick()
+            
+            while (tick() - reelStart) < 6 do
+                self:DoReel()
+                
+                -- Check still biting
+                task.wait(0.4)
+                if not self:DetectBite() then
+                    task.wait(0.3)
+                    if not self:DetectBite() then
+                        print("✓ Caught!")
+                        break
+                    end
+                end
+                
+                self:Wait(delays.Reel)
+            end
+            
+            self.State.FishCount = self.State.FishCount + 1
+            self.State.Fishing = false
+            self:Wait(delays.Between)
+            
+        else
+            print("⚠ Timeout")
+            self.State.Fishing = false
+            task.wait(2)
+        end
+    end
+    
+    self:Stop()
+end
+
+-- Simple GUI (Ronix compatible)
+function RonixFish:CreateGUI()
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "StatsGui"
+    gui.Parent = CoreGui
+    
+    -- Main button
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 60, 0, 60)
+    btn.Position = UDim2.new(0, 10, 0.5, -30)
+    btn.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
+    btn.Text = "🎣"
+    btn.TextSize = 30
+    btn.Parent = gui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = btn
+    
+    -- Panel
+    local panel = Instance.new("Frame")
+    panel.Size = UDim2.new(0, 200, 0, 250)
+    panel.Position = UDim2.new(0, 80, 0.5, -125)
+    panel.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    panel.Visible = false
+    panel.Parent = gui
+    
+    local pc = Instance.new("UICorner")
+    pc.CornerRadius = UDim.new(0, 10)
+    pc.Parent = panel
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 30)
+    title.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    title.Text = "Ronix Fish"
+    title.TextColor3 = Color3.new(1, 1, 1)
+    title.TextSize = 16
+    title.Font = Enum.Font.GothamBold
+    title.Parent = panel
+    
+    Instance.new("UICorner", title).CornerRadius = UDim.new(0, 10)
+    
+    -- Scan button
+    local scanBtn = Instance.new("TextButton")
+    scanBtn.Size = UDim2.new(0.9, 0, 0, 35)
+    scanBtn.Position = UDim2.new(0.05, 0, 0, 40)
+    scanBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    scanBtn.Text = "1. Scan Game"
+    scanBtn.TextColor3 = Color3.new(1, 1, 1)
+    scanBtn.Parent = panel
+    
+    Instance.new("UICorner", scanBtn).CornerRadius = UDim.new(0, 8)
+    
+    -- Start button
+    local startBtn = Instance.new("TextButton")
+    startBtn.Size = UDim2.new(0.9, 0, 0, 40)
+    startBtn.Position = UDim2.new(0.05, 0, 0, 85)
+    startBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 70)
+    startBtn.Text = "2. START"
+    startBtn.TextColor3 = Color3.new(1, 1, 1)
+    startBtn.TextSize = 16
+    startBtn.Font = Enum.Font.GothamBold
+    startBtn.Parent = panel
+    
+    Instance.new("UICorner", startBtn).CornerRadius = UDim.new(0, 8)
+    
+    -- Status
+    local status = Instance.new("TextLabel")
+    status.Size = UDim2.new(0.9, 0, 0, 80)
+    status.Position = UDim2.new(0.05, 0, 0, 135)
+    status.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    status.Text = "Status: Idle\nFish: 0/20\nClick SCAN first!"
+    status.TextColor3 = Color3.new(1, 1, 1)
+    status.TextSize = 14
+    status.Font = Enum.Font.Gotham
+    status.TextWrapped = true
+    status.Parent = panel
+    
+    Instance.new("UICorner", status).CornerRadius = UDim.new(0, 8)
+    
+    -- Warning
+    local warn = Instance.new("TextLabel")
+    warn.Size = UDim2.new(0.9, 0, 0, 25)
+    warn.Position = UDim2.new(0.05, 0, 0, 225)
+    warn.BackgroundTransparency = 1
+    warn.Text = "⚠️ ALT account only!"
+    warn.TextColor3 = Color3.fromRGB(255, 200, 100)
+    warn.TextSize = 12
+    warn.Parent = panel
+    
+    -- Logic
+    btn.MouseButton1Click:Connect(function()
+        panel.Visible = not panel.Visible
+    end)
+    
+    local scanned = false
+    
+    scanBtn.MouseButton1Click:Connect(function()
+        scanned = self:Init()
+        if scanned then
+            status.Text = "Status: Ready\nFound UI elements!\nClick START"
+            scanBtn.BackgroundColor3 = Color3.fromRGB(0, 100, 50)
+            scanBtn.Text = "✓ Scanned"
+        else
+            status.Text = "Status: Failed\nNo elements found\nTry manual fishing first"
+            warn.Text = "❌ Open fishing menu first!"
+            warn.TextColor3 = Color3.fromRGB(255, 100, 100)
+        end
+    end)
+    
+    startBtn.MouseButton1Click:Connect(function()
+        if not scanned then
+            status.Text = "Status: Error\nClick SCAN first!"
+            return
+        end
+        
+        if self.Config.Enabled then
+            self:Stop()
+            startBtn.Text = "2. START"
+            startBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 70)
+        else
+            self.Config.Enabled = true
+            self.State.StartTime = tick()
+            self.State.FishCount = 0
+            startBtn.Text = "STOP"
+            startBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+            
+            task.spawn(function()
+                self:Loop()
+            end)
+        end
+    end)
+    
+    -- Update
+    task.spawn(function()
+        while status.Parent do
+            task.wait(1)
+            if self.Config.Enabled then
+                local m = math.floor((tick() - self.State.StartTime) / 60)
+                status.Text = string.format(
+                    "Status: %s\nFish: %d/20\nTime: %dm/30m",
+                    self.State.Fishing and "Fishing..." or "Waiting...",
+                    self.State.FishCount,
+                    m
+                )
+            end
+        end
+    end)
+end
+
+function RonixFish:Stop()
+    self.Config.Enabled = false
+    self.State.Fishing = false
+    print("Stopped")
+end
+
+-- Run
+RonixFish:CreateGUI()
+
+return RonixFish
     HoldMax = 150,               -- ms
 }
 
