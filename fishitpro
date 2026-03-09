@@ -1,40 +1,613 @@
 --[[
-    Fish It - Ronix Ultra Basic
-    Tidak pakai CoreGui, tidak pakai assets, tidak pakai pcall
-    Hanya print ke console dan manipulasi UI game langsung
+    Fish It Mobile - 24/7 Auto Farm
+    Executor: Arceus X / Fluxus / Delta / Codex
+    Features: Extreme humanization, auto-recovery, battery saver
 ]]
 
-local Fish = {}
+local MobileFish = {}
 
+-- Services
 local Players = game:GetService("Players")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local RunService = game:GetService("RunService")
+local CoreGui = game:GetService("CoreGui")
+local UserInputService = game:GetService("UserInputService")
+local Stats = game:GetService("Stats")
+
 local LocalPlayer = Players.LocalPlayer
 
--- Config
-Fish.Config = {
+-- 24/7 Config (Ultra Safe)
+MobileFish.Config = {
+    -- Master Switch
     Enabled = false,
-    Delay = 0.4
+    PauseOnDeath = true,
+    AutoReconnect = true,  -- Rejoin kalau disconnect
+    
+    -- Speed Settings (SANGAT PENTING - jangan gedein!)
+    Mode = "Overnight", -- "Day", "Night", "Overnight"
+    
+    -- Day: Aktif main (lebih lambat, natural)
+    -- Night: AFK malem (medium)  
+    -- Overnight: 24/7 (paling lambat, paling aman)
+    
+    Delays = {
+        Day = {Min = 0.15, Max = 0.30, Reaction = 0.25, Cast = 2.0, Break = 600},
+        Night = {Min = 0.12, Max = 0.22, Reaction = 0.20, Cast = 1.8, Break = 900},
+        Overnight = {Min = 0.20, Max = 0.40, Reaction = 0.35, Cast = 2.5, Break = 1800}
+    },
+    
+    -- 24/7 Safety
+    SessionLimit = 4 * 3600,     -- Max 4 jam per "session"
+    LongBreak = 30 * 60,         -- Istirahat 30 menit
+    RandomStop = true,           -- Berhenti random buat "tidur"
+    StopChance = 5,              -- 5% chance stop tiap cycle
+    
+    -- Detection
+    Detection = {
+        UseVisual = true,
+        UseAudio = true,
+        UseVibration = false,    -- Matiin biar gak ganggu
+        BackupTimer = 12         -- Force reel setelah 12 detik
+    },
+    
+    -- Position (sesuaikan device/resolusi)
+    Positions = {
+        Cast = {X = 0.5, Y = 0.75},      -- Tombol cast (bawah tengah)
+        Reel = {X1 = 0.2, Y1 = 0.6, X2 = 0.8, Y2 = 0.9}, -- Area reel
+        Indicator = {X = 0.5, Y = 0.3}    -- Indikator "!"
+    },
+    
+    -- Battery & Performance
+    LowFPSMode = true,           -- Kurangi FPS pas malam
+    TargetFPS = 15,              -- FPS rendah = less detect
+    ReduceGraphics = true,       -- Turunin kualitas grafis
 }
 
 -- State
-Fish.State = {
-    Running = false,
-    CastBtn = nil,
-    ReelBtn = nil,
-    Indicator = nil
+MobileFish.State = {
+    IsRunning = false,
+    IsFishing = false,
+    FishCount = 0,
+    SessionStart = 0,
+    LastBreak = 0,
+    DeathCount = 0,
+    CrashCount = 0,
+    ConsecutiveErrors = 0,
+    Mode = "Overnight"
 }
 
--- Find UI (tanpa error handling, pure logic)
-function Fish:FindUI()
-    local gui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not gui then 
-        print("ERROR: No PlayerGui")
-        return false 
+-- Stats Tracking
+MobileFish.Stats = {
+    TotalFish = 0,
+    RareFish = 0,
+    StartTime = tick(),
+    Sessions = 0
+}
+
+-- Utility: Get Current Delay Config
+function MobileFish:GetDelay()
+    local mode = self.Config.Mode
+    return self.Config.Delays[mode] or self.Config.Delays.Overnight
+end
+
+-- Utility: Convert normalized to screen pos
+function MobileFish:GetPos(normX, normY)
+    local viewport = workspace.CurrentCamera.ViewportSize
+    return Vector2.new(
+        math.floor(normX * viewport.X),
+        math.floor(normY * viewport.Y)
+    )
+end
+
+-- Touch Simulation (Mobile optimized)
+function MobileFish:Touch(x, y, duration)
+    duration = duration or math.random(
+        self:GetDelay().Min * 100, 
+        self:GetDelay().Max * 100
+    ) / 100
+    
+    -- Pre-touch wobble (finger adjustment)
+    local wobbleX = x + math.random(-10, 10)
+    local wobbleY = y + math.random(-10, 10)
+    
+    -- Touch down
+    VirtualInputManager:SendTouchEvent(wobbleX, wobbleY, 0, true, game, 0)
+    task.wait(duration)
+    
+    -- Touch up
+    VirtualInputManager:SendTouchEvent(wobbleX, wobbleY, 0, false, game, 0)
+    
+    -- Recovery delay
+    task.wait(math.random(50, 150) / 1000)
+end
+
+-- Multi-touch reel (mobile trick: multiple fingers)
+function MobileFish:MultiTouchReel()
+    local delay = self:GetDelay()
+    local reelArea = self.Config.Positions.Reel
+    
+    -- Simulasi 2 jari bergantian (lebih cepat tapi natural)
+    local pos1 = self:GetPos(
+        math.random(reelArea.X1 * 100, reelArea.X2 * 100) / 100,
+        math.random(reelArea.Y1 * 100, reelArea.Y2 * 100) / 100
+    )
+    local pos2 = self:GetPos(
+        math.random(reelArea.X1 * 100, reelArea.X2 * 100) / 100,
+        math.random(reelArea.Y1 * 100, reelArea.Y2 * 100) / 100
+    )
+    
+    -- Finger 1 down
+    VirtualInputManager:SendTouchEvent(pos1.X, pos1.Y, 0, true, game, 0)
+    task.wait(0.03)
+    
+    -- Finger 2 down
+    VirtualInputManager:SendTouchEvent(pos2.X, pos2.Y, 1, true, game, 0)
+    task.wait(0.05)
+    
+    -- Both up
+    VirtualInputManager:SendTouchEvent(pos1.X, pos1.Y, 0, false, game, 0)
+    task.wait(0.02)
+    VirtualInputManager:SendTouchEvent(pos2.X, pos2.Y, 1, false, game, 0)
+end
+
+-- Detection Methods
+function MobileFish:DetectBite()
+    local detected = false
+    local method = ""
+    
+    -- Method 1: Visual (UI)
+    if self.Config.Detection.UseVisual then
+        local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+        if playerGui then
+            for _, gui in pairs(playerGui:GetDescendants()) do
+                if gui:IsA("TextLabel") and gui.Visible then
+                    local text = gui.Text:lower()
+                    if text:find("!") or text:find("bite") or text:find("pull") or text:find("now") then
+                        -- Verify position (biasanya atas)
+                        local pos = gui.AbsolutePosition.Y
+                        if pos < 300 then
+                            detected = true
+                            method = "Visual"
+                            break
+                        end
+                    end
+                end
+                
+                if gui:IsA("ImageLabel") and gui.Visible then
+                    local name = gui.Name:lower()
+                    if name:find("alert") or name:find("exclamation") or name:find("bite") then
+                        detected = true
+                        method = "VisualIcon"
+                        break
+                    end
+                end
+            end
+        end
     end
     
-    local screen = workspace.CurrentCamera.ViewportSize
+    -- Method 2: Audio (Sound playing)
+    if not detected and self.Config.Detection.UseAudio then
+        for _, obj in pairs(workspace:GetDescendants()) do
+            if obj:IsA("Sound") and obj.Playing then
+                local name = obj.Name:lower()
+                if name:find("splash") or name:find("bite") or name:find("alert") then
+                    detected = true
+                    method = "Audio"
+                    break
+                end
+            end
+        end
+    end
     
-    -- Scan semua descendant
-    for _, obj in pairs(gui:GetDescendants()) do
+    return detected, method
+end
+
+-- Performance Optimization
+function MobileFish:OptimizeFor24_7()
+    if not self.Config.ReduceGraphics then return end
+    
+    -- Lower graphics settings via settings()
+    local success = pcall(function()
+        settings().Rendering.QualityLevel = 1
+        settings().Rendering.MeshPartDetailLevel = Enum.MeshPartDetailLevel.Level04
+    end)
+    
+    -- Reduce FPS
+    if self.Config.LowFPSMode then
+        local fps = self.Config.TargetFPS
+        local interval = 1 / fps
+        
+        -- Throttle RunService
+        local connection
+        connection = RunService.Heartbeat:Connect(function()
+            task.wait(interval)
+        end)
+        
+        -- Store untuk cleanup
+        self.FPSConnection = connection
+    end
+    
+    print("⚡ 24/7 Mode: Optimized for battery saving")
+end
+
+-- Restore Performance
+function MobileFish:RestorePerformance()
+    if self.FPSConnection then
+        self.FPSConnection:Disconnect()
+        self.FPSConnection = nil
+    end
+    
+    pcall(function()
+        settings().Rendering.QualityLevel = 7
+    end)
+end
+
+-- Safety Check (CRITICAL for 24/7)
+function MobileFish:SafetyCheck()
+    local now = tick()
+    local runtime = now - self.State.SessionStart
+    local totalRuntime = now - self.Stats.StartTime
+    
+    -- Check session limit (4 jam)
+    if runtime > self.Config.SessionLimit then
+        print("⏰ Session limit reached. Taking long break...")
+        self:Notify("Long Break", "30 menit istirahat biar gak ban")
+        
+        self.State.Sessions += 1
+        self.State.SessionStart = now
+        
+        -- Long break
+        for i = self.Config.LongBreak, 1, -1 do
+            if not self.Config.Enabled then break end
+            if i % 60 == 0 then
+                print("Break remaining:", math.floor(i/60), "min")
+            end
+            task.wait(1)
+        end
+        
+        return true
+    end
+    
+    -- Random "sleep" (human behavior)
+    if self.Config.RandomStop and math.random(1, 100) <= self.Config.StopChance then
+        local sleepTime = math.random(300, 900)  -- 5-15 menit
+        print("😴 Random sleep for", math.floor(sleepTime/60), "minutes")
+        self:Notify("Sleep Mode", "Istirahat " .. math.floor(sleepTime/60) .. " menit")
+        task.wait(sleepTime)
+        return true
+    end
+    
+    -- Check death/kick
+    if self.Config.PauseOnDeath then
+        local char = LocalPlayer.Character
+        if char then
+            local humanoid = char:FindFirstChild("Humanoid")
+            if humanoid and humanoid.Health <= 0 then
+                self.State.DeathCount += 1
+                print("💀 Died! Waiting for respawn...")
+                task.wait(5)
+                return false
+            end
+        end
+    end
+    
+    -- Check error threshold
+    if self.State.ConsecutiveErrors > 10 then
+        print("⚠️ Too many errors, restarting...")
+        self.State.ConsecutiveErrors = 0
+        task.wait(10)
+    end
+    
+    return true
+end
+
+-- Notification (Mobile friendly)
+function MobileFish:Notify(title, text)
+    -- Gunakan executor notification kalau ada
+    if syn and syn.toast then
+        syn.toast(text)
+    elseif fluxus and fluxus.notify then
+        fluxus.notify(title, text)
+    else
+        -- Fallback: Console log
+        print("[" .. title .. "]", text)
+    end
+end
+
+-- Main Fishing Loop (24/7 Optimized)
+function MobileFish:MainLoop()
+    while self.Config.Enabled do
+        -- Safety check
+        if not self:SafetyCheck() then
+            task.wait(1)
+            continue
+        end
+        
+        local delay = self:GetDelay()
+        
+        -- Step 1: Cast
+        if not self.State.IsFishing then
+            local castPos = self:GetPos(self.Config.Positions.Cast.X, self.Config.Positions.Cast.Y)
+            
+            -- Randomize cast position slightly
+            castPos = Vector2.new(
+                castPos.X + math.random(-20, 20),
+                castPos.Y + math.random(-10, 10)
+            )
+            
+            self:Touch(castPos.X, castPos.Y, 0.1)
+            self.State.IsFishing = true
+            
+            -- Wait for line to drop (randomized)
+            task.wait(delay.Cast + math.random(0, 5))
+        end
+        
+        -- Step 2: Wait for bite (with backup timer)
+        local biteStart = tick()
+        local biteDetected = false
+        local detectionMethod = ""
+        
+        while tick() - biteStart < self.Config.Detection.BackupTimer do
+            if not self.Config.Enabled then break end
+            
+            local detected, method = self:DetectBite()
+            if detected then
+                -- Human reaction time
+                task.wait(delay.Reaction + (math.random(-50, 100) / 1000))
+                biteDetected = true
+                detectionMethod = method
+                break
+            end
+            
+            task.wait(0.1)  -- Poll rate
+        end
+        
+        -- Step 3: Reel
+        if biteDetected then
+            print("🐟 Bite detected via", detectionMethod)
+            
+            local reelStart = tick()
+            local maxReelTime = math.random(3, 6)
+            
+            while tick() - reelStart < maxReelTime do
+                if not self.Config.Enabled then break end
+                
+                -- Multi-touch untuk mobile (cepat tapi natural)
+                if math.random() > 0.3 then
+                    self:MultiTouchReel()
+                else
+                    -- Single touch biasa
+                    local reelX = math.random(
+                        self.Config.Positions.Reel.X1 * 100,
+                        self.Config.Positions.Reel.X2 * 100
+                    ) / 100
+                    local reelY = math.random(
+                        self.Config.Positions.Reel.Y1 * 100,
+                        self.Config.Positions.Reel.Y2 * 100
+                    ) / 100
+                    local pos = self:GetPos(reelX, reelY)
+                    self:Touch(pos.X, pos.Y)
+                end
+                
+                -- Check if still biting
+                if tick() - reelStart > 1.5 then
+                    local stillBiting, _ = self:DetectBite()
+                    if not stillBiting then
+                        -- Wait confirmation
+                        task.wait(0.5)
+                        local confirm, _ = self:DetectBite()
+                        if not confirm then
+                            break  -- Fish caught or escaped
+                        end
+                    end
+                end
+                
+                -- Variable delay (anti-pattern)
+                task.wait(math.random(delay.Min * 100, delay.Max * 100) / 100)
+            end
+            
+            -- Success
+            self.State.FishCount += 1
+            self.Stats.TotalFish += 1
+            self.State.ConsecutiveErrors = 0
+            
+            -- Random celebration pause (kadang-kadang)
+            if math.random() > 0.7 then
+                task.wait(math.random(1, 3))
+            end
+            
+        else
+            -- Timeout or error
+            self.State.ConsecutiveErrors += 1
+            print("⚠️ No bite detected, recasting...")
+        end
+        
+        -- Reset state
+        self.State.IsFishing = false
+        
+        -- Break antara cast (sangat penting!)
+        task.wait(math.random(1, 3))
+    end
+end
+
+-- Auto Reconnect (for 24/7)
+function MobileFish:StartAutoReconnect()
+    task.spawn(function()
+        while self.Config.AutoReconnect do
+            task.wait(30)  -- Check every 30 seconds
+            
+            if not self.Config.Enabled then continue end
+            
+            -- Check if disconnected
+            if not game:IsLoaded() or not LocalPlayer.Parent then
+                print("🔌 Disconnected! Attempting reconnect...")
+                self.State.CrashCount += 1
+                
+                -- Wait for auto-rejoin atau force rejoin
+                task.wait(10)
+                
+                -- Teleport service rejoin
+                local success = pcall(function()
+                    local placeId = game.PlaceId
+                    local jobId = game.JobId
+                    game:GetService("TeleportService"):TeleportToPlaceInstance(placeId, jobId)
+                end)
+                
+                if not success then
+                    -- Fallback: just teleport to place
+                    pcall(function()
+                        game:GetService("TeleportService"):Teleport(game.PlaceId)
+                    end)
+                end
+            end
+        end
+    end)
+end
+
+-- GUI Mobile Optimized
+function MobileFish:CreateMobileGUI()
+    local screen = Instance.new("ScreenGui")
+    screen.Name = "RbxGui_" .. math.random(100000, 999999)
+    screen.Parent = CoreGui
+    
+    -- Main button (floating, minimal)
+    local btn = Instance.new("TextButton")
+    btn.Name = "MenuBtn"
+    btn.Size = UDim2.new(0, 60, 0, 60)
+    btn.Position = UDim2.new(1, -80, 0.5, -30)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 50)
+    btn.Text = "🎣"
+    btn.TextSize = 30
+    btn.Parent = screen
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = btn
+    
+    -- Menu Frame (hidden by default)
+    local menu = Instance.new("Frame")
+    menu.Name = "Menu"
+    menu.Size = UDim2.new(0, 280, 0, 400)
+    menu.Position = UDim2.new(1, -300, 0.5, -200)
+    menu.BackgroundColor3 = Color3.fromRGB(30, 30, 40)
+    menu.BorderSizePixel = 0
+    menu.Visible = false
+    menu.Parent = screen
+    
+    local menuCorner = Instance.new("UICorner")
+    menuCorner.CornerRadius = UDim.new(0, 15)
+    menuCorner.Parent = menu
+    
+    -- Toggle Menu
+    btn.MouseButton1Click:Connect(function()
+        menu.Visible = not menu.Visible
+    end)
+    
+    -- Title
+    local title = Instance.new("TextLabel")
+    title.Size = UDim2.new(1, 0, 0, 50)
+    title.BackgroundColor3 = Color3.fromRGB(40, 40, 55)
+    title.Text = "Fish It 24/7"
+    title.TextColor3 = Color3.fromRGB(255, 255, 255)
+    title.TextSize = 20
+    title.Font = Enum.Font.GothamBold
+    title.Parent = menu
+    
+    local titleCorner = Instance.new("UICorner")
+    titleCorner.CornerRadius = UDim.new(0, 15)
+    titleCorner.Parent = title
+    
+    -- Start/Stop Button
+    local toggleBtn = Instance.new("TextButton")
+    toggleBtn.Size = UDim2.new(0.9, 0, 0, 50)
+    toggleBtn.Position = UDim2.new(0.05, 0, 0, 60)
+    toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+    toggleBtn.Text = "START 24/7"
+    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggleBtn.TextSize = 18
+    toggleBtn.Font = Enum.Font.GothamBold
+    toggleBtn.Parent = menu
+    
+    local toggleCorner = Instance.new("UICorner")
+    toggleCorner.CornerRadius = UDim.new(0, 10)
+    toggleCorner.Parent = toggleBtn
+    
+    -- Mode Selector
+    local modeLabel = Instance.new("TextLabel")
+    modeLabel.Size = UDim2.new(0.9, 0, 0, 30)
+    modeLabel.Position = UDim2.new(0.05, 0, 0, 120)
+    modeLabel.BackgroundTransparency = 1
+    modeLabel.Text = "Mode: Overnight (Safest)"
+    modeLabel.TextColor3 = Color3.fromRGB(200, 200, 200)
+    modeLabel.TextSize = 14
+    modeLabel.Parent = menu
+    
+    local modeBtn = Instance.new("TextButton")
+    modeBtn.Size = UDim2.new(0.9, 0, 0, 40)
+    modeBtn.Position = UDim2.new(0.05, 0, 0, 150)
+    modeBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 80)
+    modeBtn.Text = "Switch Mode"
+    modeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    modeBtn.Parent = menu
+    
+    local modeCorner = Instance.new("UICorner")
+    modeCorner.CornerRadius = UDim.new(0, 8)
+    modeCorner.Parent = modeBtn
+    
+    -- Stats
+    local statsLabel = Instance.new("TextLabel")
+    statsLabel.Name = "Stats"
+    statsLabel.Size = UDim2.new(0.9, 0, 0, 100)
+    statsLabel.Position = UDim2.new(0.05, 0, 0, 200)
+    statsLabel.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    statsLabel.Text = "Fish: 0\nSession: 0h 0m\nMode: Overnight"
+    statsLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    statsLabel.TextSize = 14
+    statsLabel.Font = Enum.Font.Gotham
+    statsLabel.Parent = menu
+    
+    local statsCorner = Instance.new("UICorner")
+    statsCorner.CornerRadius = UDim.new(0, 10)
+    statsCorner.Parent = statsLabel
+    
+    -- Safety Info
+    local safetyLabel = Instance.new("TextLabel")
+    safetyLabel.Size = UDim2.new(0.9, 0, 0, 80)
+    safetyLabel.Position = UDim2.new(0.05, 0, 0, 310)
+    safetyLabel.BackgroundTransparency = 1
+    safetyLabel.Text = "⚠️ Use alt account\nMax 4h/session\n30min break auto"
+    safetyLabel.TextColor3 = Color3.fromRGB(255, 200, 100)
+    safetyLabel.TextSize = 12
+    safetyLabel.TextWrapped = true
+    safetyLabel.Parent = menu
+    
+    -- Logic
+    local modes = {"Day", "Night", "Overnight"}
+    local modeIndex = 3
+    
+    modeBtn.MouseButton1Click:Connect(function()
+        modeIndex = modeIndex % #modes + 1
+        self.Config.Mode = modes[modeIndex]
+        modeLabel.Text = "Mode: " .. self.Config.Mode
+    end)
+    
+    toggleBtn.MouseButton1Click:Connect(function()
+        self.Config.Enabled = not self.Config.Enabled
+        
+        if self.Config.Enabled then
+            toggleBtn.Text = "STOP"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(200, 50, 50)
+            self:Start()
+        else
+            toggleBtn.Text = "START 24/7"
+            toggleBtn.BackgroundColor3 = Color3.fromRGB(0, 150, 100)
+            self:Stop()
+        end
+    end)
+    
+    -- Update stats
+    task.spawn(function()
+        for _, obj in pairs(gui:GetDescendants()) do
         -- Cari button
         if obj:IsA("TextButton") or obj:IsA("ImageButton") then
             local pos = obj.AbsolutePosition
