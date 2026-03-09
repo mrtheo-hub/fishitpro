@@ -1,39 +1,216 @@
 --[[
-    Fish It - Ronix Basic
-    Hanya pakai: Instance, Property read/write, math, string, table
-    Tidak pakai: fireclickdetector, getconnections, VirtualInputManager, pcall
+    Fish It - Ronix Ultra Basic
+    Tidak pakai CoreGui, tidak pakai assets, tidak pakai pcall
+    Hanya print ke console dan manipulasi UI game langsung
 ]]
 
 local Fish = {}
 
--- Services (hanya yang basic)
 local Players = game:GetService("Players")
-local CoreGui = game:GetService("CoreGui")
-local RunService = game:GetService("RunService")
-
 local LocalPlayer = Players.LocalPlayer
 
 -- Config
 Fish.Config = {
     Enabled = false,
-    CastPos = {X = 0.5, Y = 0.75},  -- Will auto-detect
-    ReelPos = {X = 0.5, Y = 0.6},   -- Will auto-detect
-    Delay = 0.3  -- Seconds between actions
+    Delay = 0.4
 }
 
 -- State
 Fish.State = {
     Running = false,
-    CastButton = nil,
-    ReelButton = nil,
-    BiteIndicator = nil
+    CastBtn = nil,
+    ReelBtn = nil,
+    Indicator = nil
 }
 
--- Find UI by position (Ronix compatible)
-function Fish:FindButtons()
-    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
-    if not playerGui then return false end
+-- Find UI (tanpa error handling, pure logic)
+function Fish:FindUI()
+    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+    if not gui then 
+        print("ERROR: No PlayerGui")
+        return false 
+    end
     
+    local screen = workspace.CurrentCamera.ViewportSize
+    
+    -- Scan semua descendant
+    for _, obj in pairs(gui:GetDescendants()) do
+        -- Cari button
+        if obj:IsA("TextButton") or obj:IsA("ImageButton") then
+            local pos = obj.AbsolutePosition
+            local y = pos.Y
+            
+            -- Cast = paling bawah
+            if y > screen.Y * 0.7 then
+                self.State.CastBtn = obj
+                print("CAST:", obj.Name, "at Y:", y)
+            end
+            
+            -- Reel = tengah bawah
+            if y > screen.Y * 0.5 and y < screen.Y * 0.8 then
+                -- Cek kalau besar (reel area biasanya besar)
+                local size = obj.AbsoluteSize
+                if size.X > 100 and size.Y > 50 then
+                    self.State.ReelBtn = obj
+                    print("REEL:", obj.Name, "size:", size.X, size.Y)
+                end
+            end
+        end
+        
+        -- Cari indicator
+        if obj:IsA("TextLabel") or obj:IsA("ImageLabel") then
+            local name = obj.Name:lower()
+            if name:find("bite") or name:find("alert") or name:find("!") then
+                self.State.Indicator = obj
+                print("INDICATOR:", obj.Name)
+            end
+        end
+    end
+    
+    return self.State.CastBtn ~= nil
+end
+
+-- Check bite
+function Fish:CheckBite()
+    if self.State.Indicator then
+        return self.State.Indicator.Visible
+    end
+    
+    -- Fallback: cari text "!"
+    local gui = LocalPlayer:FindFirstChild("PlayerGui")
+    if gui then
+        for _, obj in pairs(gui:GetDescendants()) do
+            if obj:IsA("TextLabel") and obj.Visible then
+                local text = obj.Text
+                if text and text:find("!") then
+                    return true
+                end
+            end
+        end
+    end
+    
+    return false
+end
+
+-- Click (property manipulation only)
+function Fish:Click(btn)
+    if not btn then return end
+    
+    -- Visual feedback
+    local oldColor = btn.BackgroundColor3
+    btn.BackgroundColor3 = Color3.new(0.7, 0.7, 0.7)
+    
+    -- Toggle Active (kadang trigger event)
+    local wasActive = btn.Active
+    btn.Active = not wasActive
+    btn.Active = wasActive
+    
+    -- Restore
+    task.wait(0.1)
+    btn.BackgroundColor3 = oldColor
+end
+
+-- Main loop
+function Fish:Loop()
+    while Fish.Config.Enabled do
+        -- Cast
+        if not Fish.State.Running then
+            print(">>> CASTING")
+            Fish:Click(Fish.State.CastBtn)
+            Fish.State.Running = true
+            task.wait(2.5)
+        end
+        
+        -- Wait bite
+        local startTime = tick()
+        local bite = false
+        
+        while tick() - startTime < 12 do
+            if Fish:CheckBite() then
+                bite = true
+                print(">>> BITE DETECTED")
+                task.wait(0.3)
+                break
+            end
+            task.wait(0.1)
+        end
+        
+        -- Reel
+        if bite then
+            local reelStart = tick()
+            
+            while tick() - reelStart < 6 do
+                print(">>> REELING")
+                Fish:Click(Fish.State.ReelBtn)
+                
+                task.wait(0.4)
+                if not Fish:CheckBite() then
+                    task.wait(0.3)
+                    if not Fish:CheckBite() then
+                        print(">>> CAUGHT")
+                        break
+                    end
+                end
+                
+                task.wait(Fish.Config.Delay)
+            end
+            
+            Fish.State.Running = false
+            task.wait(1.5)
+        else
+            print(">>> TIMEOUT")
+            Fish.State.Running = false
+            task.wait(2)
+        end
+    end
+    
+    print(">>> STOPPED")
+end
+
+-- Simple control (tanpa GUI, pakai hotkey text command)
+function Fish:Start()
+    -- Auto scan
+    print("=== FISH IT RONIX ===")
+    print("Scanning UI...")
+    
+    local found = Fish:FindUI()
+    
+    if not found then
+        print("ERROR: Cast button not found")
+        print("Make sure fishing UI is visible")
+        return
+    end
+    
+    print("Found! Type 'start' to begin")
+    
+    -- Command loop (karena tidak bisa buat GUI)
+    task.spawn(function()
+        while true do
+            task.wait(1)
+            -- User harus jalankan fungsi manual via executor
+        end
+    end)
+end
+
+-- Manual control functions
+function Fish:Go()
+    if Fish.Config.Enabled then return end
+    Fish.Config.Enabled = true
+    print(">>> STARTING")
+    Fish:Loop()
+end
+
+function Fish:Stop()
+    Fish.Config.Enabled = false
+    Fish.State.Running = false
+    print(">>> STOPPING")
+end
+
+-- Init
+Fish:Start()
+
+-- Return control functions
+return Fish
     local screen = workspace.CurrentCamera.ViewportSize
     
     -- Find all buttons
