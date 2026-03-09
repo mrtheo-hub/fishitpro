@@ -1,39 +1,475 @@
 --[[
-    Fish It Silent - BAC Resistant
-    Strategy: Zero remote calls, pure input simulation, pixel detection
+    Fish It Shadow - BAC-5229 Proof
+    Strategy: Extreme humanization, no patterns, native UI hijack
 ]]
 
-local SilentFish = {}
+local ShadowFish = {}
 
--- Services
-local VirtualInputManager = game:GetService("VirtualInputManager")
 local Players = game:GetService("Players")
-local RunService = game:GetService("RunService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local CoreGui = game:GetService("CoreGui")
 local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
+local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 
--- Config
-SilentFish.Config = {
+-- Config (Ultra Conservative)
+ShadowFish.Config = {
     Enabled = false,
-    Mode = "Legit", -- "Legit", "Fast", "Silent"
-    DetectionType = "Visual", -- "Visual", "Audio", "Vibration"
     
-    -- Humanization
-    MinDelay = 0.08,
-    MaxDelay = 0.18,
-    ReactionMin = 0.15,  -- Delay react ke gigitan (human-like)
-    ReactionMax = 0.35,
+    -- Timing (SANGAT PENTING - jangan kurangin!)
+    BaseDelay = 0.25,        -- Base delay (BAC threshold ~0.15s)
+    RandomVariance = 0.15,   -- Variance tambahan (0.25-0.40s total)
+    ReactionBase = 0.35,     -- Reaction time manusia (jangan <0.30!)
+    ReactionVariance = 0.20, -- Variance reaction
     
     -- Safety
-    MaxFishPerHour = 120,  -- Limit biar gak suspicious
-    BreakInterval = 300,   -- Istirahat 5 menit tiap...
-    BreakDuration = 60,    -- ...1 menit
+    MaxFishPerSession = 50,  -- Max 50 fish lalu stop otomatis
+    SessionDuration = 3600,  -- Max 1 jam per session
+    PauseChance = 15,        -- 15% chance pause tiap action
     
-    -- Position (sesuaikan UI game)
-    CastButton = {X = 0.5, Y = 0.8},      -- Posisi tombol cast (normalized)
-    ReelArea = {X1 = 0.3, Y1 = 0.6, X2 = 0.7, Y2 = 0.9}, -- Area reel
+    -- Detection (Multiple methods)
+    DetectMethods = {"Visual", "Animation", "Timer"},  -- Timer = backup
+    
+    -- Position (akan di-calibrate otomatis)
+    Positions = {
+        Cast = nil,    -- Auto-detect
+        Reel = nil,    -- Auto-detect
+        Indicator = nil -- Auto-detect
+    }
+}
+
+-- State
+ShadowFish.State = {
+    FishCount = 0,
+    StartTime = 0,
+    LastAction = 0,
+    IsFishing = false,
+    Paused = false,
+    CalibrationDone = false
+}
+
+-- CRITICAL: Jitter function (anti-pattern detection)
+function ShadowFish:Jitter(value, percent)
+    percent = percent or 0.15  -- 15% jitter default
+    local variance = value * percent
+    return value + math.random(-variance * 100, variance * 100) / 100
+end
+
+-- CRITICAL: Random delay dengan distribution curve (bukan flat random)
+function ShadowFish:SmartDelay(base, variance)
+    -- Gaussian-like distribution (lebih natural dari flat random)
+    local r1 = math.random()
+    local r2 = math.random()
+    local gaussian = math.sqrt(-2 * math.log(r1)) * math.cos(2 * math.pi * r2)
+    
+    -- Clamp ke 0-1 lalu scale
+    gaussian = math.clamp(gaussian / 3 + 0.5, 0, 1)
+    
+    return base + (gaussian * variance)
+end
+
+-- CRITICAL: Human-like input dengan micro-movements
+function ShadowFish:HumanInput(x, y, holdTime)
+    -- Jitter position (finger tidak pernah exact)
+    local jitterX = math.random(-15, 15)
+    local jitterY = math.random(-15, 15)
+    local finalX = math.floor(x + jitterX)
+    local finalY = math.floor(y + jitterY)
+    
+    -- Approach movement (jari mendekat sebelum touch)
+    local approachSteps = math.random(2, 4)
+    for i = 1, approachSteps do
+        local progress = i / approachSteps
+        local stepX = math.floor(finalX - (jitterX * (1 - progress)))
+        local stepY = math.floor(finalY - (jitterY * (1 - progress)))
+        
+        VirtualInputManager:SendMouseMoveEvent(stepX, stepY, game)
+        task.wait(math.random(20, 50) / 1000)  -- 20-50ms
+    end
+    
+    -- Hold time dengan jitter
+    local actualHold = self:SmartDelay(holdTime or 0.08, 0.05)
+    
+    -- Touch down
+    VirtualInputManager:SendMouseButtonEvent(finalX, finalY, 0, true, game, 0)
+    
+    -- Micro-movement saat hold (finger drift)
+    local driftInterval = actualHold / 3
+    for i = 1, 2 do
+        task.wait(driftInterval)
+        local driftX = finalX + math.random(-3, 3)
+        local driftY = finalY + math.random(-3, 3)
+        VirtualInputManager:SendMouseMoveEvent(driftX, driftY, game)
+    end
+    
+    task.wait(driftInterval)
+    
+    -- Touch up
+    VirtualInputManager:SendMouseButtonEvent(finalX, finalY, 0, false, game, 0)
+    
+    -- Recovery movement
+    task.wait(math.random(30, 80) / 1000)
+    
+    -- Random pause (fatigue simulation)
+    if math.random(1, 100) <= self.Config.PauseChance then
+        task.wait(math.random(200, 800) / 1000)  -- 0.2-0.8s pause
+    end
+end
+
+-- CRITICAL: Auto-calibrate positions dari UI game (tidak hardcode)
+function ShadowFish:Calibrate()
+    print("🔍 Calibrating...")
+    
+    local playerGui = LocalPlayer:WaitForChild("PlayerGui")
+    local screenSize = workspace.CurrentCamera.ViewportSize
+    
+    -- Cari UI elements dengan nama patterns
+    for _, gui in pairs(playerGui:GetDescendants()) do
+        if gui:IsA("TextButton") or gui:IsA("ImageButton") then
+            local name = gui.Name:lower()
+            
+            -- Detect cast button (biasanya "Cast", "Fish", "Throw")
+            if name:find("cast") or name:find("fish") or name:find("throw") then
+                local pos = gui.AbsolutePosition
+                local size = gui.AbsoluteSize
+                self.Config.Positions.Cast = {
+                    X = (pos.X + size.X/2) / screenSize.X,
+                    Y = (pos.Y + size.Y/2) / screenSize.Y
+                }
+                print("✓ Cast button found")
+            end
+            
+            -- Detect reel area (biasanya "Reel", "Pull", atau area besar bawah)
+            if name:find("reel") or name:find("pull") or name:find("tap") then
+                local pos = gui.AbsolutePosition
+                local size = gui.AbsoluteSize
+                self.Config.Positions.Reel = {
+                    X1 = pos.X / screenSize.X,
+                    Y1 = pos.Y / screenSize.Y,
+                    X2 = (pos.X + size.X) / screenSize.X,
+                    Y2 = (pos.Y + size.Y) / screenSize.Y
+                }
+                print("✓ Reel area found")
+            end
+        end
+        
+        -- Detect bite indicator (TextLabel/ImageLabel di tengah atas)
+        if gui:IsA("TextLabel") or gui:IsA("ImageLabel") then
+            local name = gui.Name:lower()
+            if name:find("bite") or name:find("alert") or name:find("exclaim") then
+                local pos = gui.AbsolutePosition
+                self.Config.Positions.Indicator = {
+                    X = pos.X / screenSize.X,
+                    Y = pos.Y / screenSize.Y
+                }
+                print("✓ Bite indicator found")
+            end
+        end
+    end
+    
+    -- Fallback kalau tidak ketemu
+    if not self.Config.Positions.Cast then
+        self.Config.Positions.Cast = {X = 0.5, Y = 0.75}  -- Center-bottom
+        print("⚠ Cast fallback")
+    end
+    if not self.Config.Positions.Reel then
+        self.Config.Positions.Reel = {X1 = 0.2, Y1 = 0.6, X2 = 0.8, Y2 = 0.9}
+        print("⚠ Reel fallback")
+    end
+    
+    self.State.CalibrationDone = true
+    print("✓ Calibration complete")
+end
+
+-- CRITICAL: Multi-method detection dengan confidence scoring
+function ShadowFish:DetectBite()
+    local confidence = 0
+    local methods = {}
+    
+    -- Method 1: Visual (UI elements)
+    local playerGui = LocalPlayer:FindFirstChild("PlayerGui")
+    if playerGui then
+        for _, gui in pairs(playerGui:GetDescendants()) do
+            if gui:IsA("TextLabel") and gui.Visible then
+                local text = gui.Text:lower()
+                if text:find("!") or text:find("bite") or text:find("now") then
+                    confidence = confidence + 40
+                    table.insert(methods, "Text")
+                    break
+                end
+            end
+            if gui:IsA("ImageLabel") and gui.Visible then
+                local name = gui.Name:lower()
+                if name:find("alert") or name:find("exclaim") then
+                    confidence = confidence + 35
+                    table.insert(methods, "Icon")
+                end
+            end
+        end
+    end
+    
+    -- Method 2: Animation state
+    local character = LocalPlayer.Character
+    if character then
+        local humanoid = character:FindFirstChild("Humanoid")
+        if humanoid then
+            -- Cek animator (kalau ada animation reel/bite playing)
+            -- Note: Ini hanya contoh, perlu adjust berdasar game
+        end
+    end
+    
+    -- Method 3: Timer-based (backup - force reel setelah X detik)
+    if self.State.IsFishing and (tick() - self.State.LastAction) > 10 then
+        confidence = confidence + 20
+        table.insert(methods, "Timer")
+    end
+    
+    return confidence >= 40, confidence, methods
+end
+
+-- CRITICAL: Session limit enforcement
+function ShadowFish:CheckLimits()
+    -- Check fish count
+    if self.State.FishCount >= self.Config.MaxFishPerSession then
+        print("🛑 Session limit reached (", self.State.FishCount, "fish)")
+        self:Notify("Limit reached", "Stop untuk menghindari ban")
+        self:Stop()
+        return false
+    end
+    
+    -- Check duration
+    if (tick() - self.State.StartTime) > self.Config.SessionDuration then
+        print("🛑 Time limit reached")
+        self:Stop()
+        return false
+    end
+    
+    return true
+end
+
+-- Main Loop (Ultra Conservative)
+function ShadowFish:MainLoop()
+    while self.Config.Enabled do
+        if not self:CheckLimits() then break end
+        
+        -- Step 1: Cast
+        if not self.State.IsFishing then
+            local cast = self.Config.Positions.Cast
+            local screen = workspace.CurrentCamera.ViewportSize
+            local x = cast.X * screen.X
+            local y = cast.Y * screen.Y
+            
+            -- Pre-cast delay (persiapan manusia)
+            task.wait(self:SmartDelay(0.5, 0.3))
+            
+            self:HumanInput(x, y, 0.1)
+            self.State.IsFishing = true
+            self.State.LastAction = tick()
+            
+            -- Wait for line drop (variable)
+            task.wait(self:SmartDelay(2.0, 1.0))
+        end
+        
+        -- Step 2: Wait for bite
+        local biteStart = tick()
+        local detected = false
+        
+        while (tick() - biteStart) < 12 do  -- Max 12 detik
+            local isBite, confidence, methods = self:DetectBite()
+            
+            if isBite then
+                -- Reaction delay (CRITICAL - jangan instan!)
+                local reaction = self:SmartDelay(
+                    self.Config.ReactionBase, 
+                    self.Config.ReactionVariance
+                )
+                task.wait(reaction)
+                
+                detected = true
+                print("🐟 Bite detected (confidence:", confidence, ")")
+                break
+            end
+            
+            task.wait(0.1)
+        end
+        
+        -- Step 3: Reel (jika bite detected)
+        if detected then
+            local reelStart = tick()
+            local reelCount = 0
+            
+            while (tick() - reelStart) < 5 do  -- Max 5 detik reel
+                local reel = self.Config.Positions.Reel
+                local screen = workspace.CurrentCamera.ViewportSize
+                
+                -- Random position dalam reel area
+                local x = (math.random(reel.X1 * 100, reel.X2 * 100) / 100) * screen.X
+                local y = (math.random(reel.Y1 * 100, reel.Y2 * 100) / 100) * screen.Y
+                
+                -- Variable hold time (reel tidak flat)
+                local hold = self:SmartDelay(0.08, 0.04)
+                
+                self:HumanInput(x, y, hold)
+                reelCount = reelCount + 1
+                
+                -- Check masih biting?
+                if reelCount > 5 then  -- Cek setelah beberapa reel
+                    local stillBite, _, _ = self:DetectBite()
+                    if not stillBite then
+                        task.wait(0.5)
+                        local confirm, _, _ = self:DetectBite()
+                        if not confirm then
+                            print("✓ Fish caught")
+                            break
+                        end
+                    end
+                end
+                
+                -- Delay antar reel (VARIABLE - ini kunci!)
+                task.wait(self:SmartDelay(self.Config.BaseDelay, self.Config.RandomVariance))
+            end
+            
+            self.State.FishCount = self.State.FishCount + 1
+            self.State.IsFishing = false
+            
+            -- Post-catch celebration (kadang-kadang)
+            if math.random() > 0.6 then
+                task.wait(self:SmartDelay(1.5, 1.0))
+            end
+            
+        else
+            -- Timeout
+            print("⚠ Timeout, recasting")
+            self.State.IsFishing = false
+            task.wait(2)
+        end
+        
+        -- Random long pause (sangat penting untuk 24/7)
+        if math.random(1, 20) == 1 then  -- 5% chance
+            print("😴 Micro break...")
+            task.wait(math.random(5, 15))
+        end
+    end
+end
+
+-- GUI (Hijack existing Roblox UI - lebih stealth)
+function ShadowFish:CreateGUI()
+    -- Cari existing UI untuk hijack (contoh: chat button)
+    local existingUI = CoreGui:FindFirstChild("RobloxGui")
+    
+    local gui = Instance.new("ScreenGui")
+    gui.Name = "Chat"  -- Camouflage sebagai Chat
+    gui.Parent = CoreGui
+    
+    -- Button kecil di pojok (seperti chat button)
+    local btn = Instance.new("TextButton")
+    btn.Size = UDim2.new(0, 50, 0, 50)
+    btn.Position = UDim2.new(1, -60, 1, -110)
+    btn.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
+    btn.Text = "💬"
+    btn.TextSize = 24
+    btn.Parent = gui
+    
+    local corner = Instance.new("UICorner")
+    corner.CornerRadius = UDim.new(1, 0)
+    corner.Parent = btn
+    
+    -- Menu (hidden)
+    local menu = Instance.new("Frame")
+    menu.Size = UDim2.new(0, 250, 0, 150)
+    menu.Position = UDim2.new(1, -270, 1, -270)
+    menu.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+    menu.BorderSizePixel = 0
+    menu.Visible = false
+    menu.Parent = gui
+    
+    local menuCorner = Instance.new("UICorner")
+    menuCorner.CornerRadius = UDim.new(0, 10)
+    menuCorner.Parent = menu
+    
+    -- Toggle
+    local toggle = Instance.new("TextButton")
+    toggle.Size = UDim2.new(0.9, 0, 0, 40)
+    toggle.Position = UDim2.new(0.05, 0, 0.1, 0)
+    toggle.BackgroundColor3 = Color3.fromRGB(0, 120, 80)
+    toggle.Text = "START"
+    toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    toggle.TextSize = 16
+    toggle.Font = Enum.Font.GothamBold
+    toggle.Parent = menu
+    
+    -- Stats
+    local stats = Instance.new("TextLabel")
+    stats.Size = UDim2.new(0.9, 0, 0, 60)
+    stats.Position = UDim2.new(0.05, 0, 0.5, 0)
+    stats.BackgroundTransparency = 1
+    stats.Text = "Fish: 0\nStatus: Idle"
+    stats.TextColor3 = Color3.fromRGB(200, 200, 200)
+    stats.TextSize = 14
+    stats.Font = Enum.Font.Gotham
+    stats.TextWrapped = true
+    stats.Parent = menu
+    
+    -- Logic
+    btn.MouseButton1Click:Connect(function()
+        menu.Visible = not menu.Visible
+    end)
+    
+    toggle.MouseButton1Click:Connect(function()
+        if not self.State.CalibrationDone then
+            self:Calibrate()
+        end
+        
+        self.Config.Enabled = not self.Config.Enabled
+        
+        if self.Config.Enabled then
+            toggle.Text = "STOP"
+            toggle.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
+            self.State.StartTime = tick()
+            self.State.FishCount = 0
+            self:MainLoop()
+        else
+            toggle.Text = "START"
+            toggle.BackgroundColor3 = Color3.fromRGB(0, 120, 80)
+        end
+    end)
+    
+    -- Update stats
+    task.spawn(function()
+        while stats.Parent do
+            task.wait(1)
+            if self.Config.Enabled then
+                local elapsed = math.floor((tick() - self.State.StartTime) / 60)
+                stats.Text = string.format(
+                    "Fish: %d/%d\nTime: %dm/%dm\nStatus: %s",
+                    self.State.FishCount,
+                    self.Config.MaxFishPerSession,
+                    elapsed,
+                    self.Config.SessionDuration / 60,
+                    self.State.IsFishing and "Fishing" or "Waiting"
+                )
+            end
+        end
+    end)
+end
+
+function ShadowFish:Notify(title, text)
+    -- Simple console notification (avoid in-game UI)
+    print("[" .. title .. "]", text)
+end
+
+function ShadowFish:Stop()
+    self.Config.Enabled = false
+    self.State.IsFishing = false
+    print("⏹️ Stopped")
+end
+
+-- Initialize
+ShadowFish:CreateGUI()
+
+return ShadowFish
     BiteIndicator = {X = 0.5, Y = 0.3},   -- Posisi indikator "!"
 }
 
